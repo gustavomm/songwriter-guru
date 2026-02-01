@@ -1,19 +1,8 @@
 import { useState, useMemo, useRef, useEffect } from 'react'
 import { midiPlayer } from '../services/midiPlayer'
 import { midiToNoteName } from '../services/transcriptionService'
+import { PlayIcon, StopIcon } from './icons'
 import type { TranscribedNote } from '../domain/types'
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Types
-// ─────────────────────────────────────────────────────────────────────────────
-
-interface NotesTimelineProps {
-    notes: TranscribedNote[]
-    isPlaying?: boolean
-    currentNoteIndex?: number
-    onPlayAll?: () => void
-    onStop?: () => void
-}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Constants
@@ -39,23 +28,15 @@ const OCTAVE_COLORS = [
 ]
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Icons
+// Types
 // ─────────────────────────────────────────────────────────────────────────────
 
-function PlayIcon({ className }: { className?: string }) {
-    return (
-        <svg className={className} fill="currentColor" viewBox="0 0 20 20">
-            <path d="M6.3 2.841A1.5 1.5 0 004 4.11V15.89a1.5 1.5 0 002.3 1.269l9.344-5.89a1.5 1.5 0 000-2.538L6.3 2.84z" />
-        </svg>
-    )
-}
-
-function StopIcon({ className }: { className?: string }) {
-    return (
-        <svg className={className} fill="currentColor" viewBox="0 0 20 20">
-            <path d="M5.25 3A2.25 2.25 0 003 5.25v9.5A2.25 2.25 0 005.25 17h9.5A2.25 2.25 0 0017 14.75v-9.5A2.25 2.25 0 0014.75 3h-9.5z" />
-        </svg>
-    )
+interface NotesTimelineProps {
+    notes: TranscribedNote[]
+    isPlaying?: boolean
+    currentNoteIndex?: number
+    onPlayAll?: () => void
+    onStop?: () => void
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -153,8 +134,8 @@ export function NotesTimeline({
                     <button
                         onClick={isPlaying ? onStop : onPlayAll}
                         className={`flex cursor-pointer items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium transition-all sm:gap-1.5 sm:px-3 sm:py-1 sm:text-xs ${isPlaying
-                            ? 'bg-emerald-600 text-white ring-2 ring-emerald-400/50'
-                            : 'bg-stone-800 text-stone-400 hover:bg-stone-700 hover:text-stone-300'
+                                ? 'bg-emerald-600 text-white ring-2 ring-emerald-400/50'
+                                : 'bg-stone-800 text-stone-400 hover:bg-stone-700 hover:text-stone-300'
                             }`}
                     >
                         {isPlaying ? (
@@ -222,8 +203,8 @@ export function NotesTimeline({
                                     key={i}
                                     onClick={() => handlePlayNote(note, i)}
                                     className={`absolute cursor-pointer rounded-md bg-gradient-to-r shadow-md transition-all ${colorClass} ${isCurrentlyPlaying
-                                        ? 'ring-2 ring-white/60 brightness-125 scale-y-110'
-                                        : 'hover:brightness-110 hover:ring-1 hover:ring-white/30'
+                                            ? 'ring-2 ring-white/60 brightness-125 scale-y-110'
+                                            : 'hover:brightness-110 hover:ring-1 hover:ring-white/30'
                                         }`}
                                     style={{
                                         left: `${note.leftPercent}%`,

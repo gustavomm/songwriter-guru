@@ -1,0 +1,1 @@
+export { ChordsPanel } from './ChordsPanel'
