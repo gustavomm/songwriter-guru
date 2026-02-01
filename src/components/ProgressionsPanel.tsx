@@ -27,7 +27,7 @@ function WeirdnessKnob({ value, onChange, onChangeComplete, disabled = false }: 
   // Rotation: -135° (7 o'clock, 0%) to +135° (5 o'clock, 100%)
   const rotation = -135 + value * 270
 
-  // Calculate angle from knob center to mouse position
+  // Calculate angle from knob center to pointer position
   const getAngleFromCenter = useCallback((clientX: number, clientY: number): number | null => {
     if (!knobRef.current) return null
     const rect = knobRef.current.getBoundingClientRect()
@@ -43,18 +43,32 @@ function WeirdnessKnob({ value, onChange, onChangeComplete, disabled = false }: 
     return angle
   }, [])
 
-  const handleMouseDown = useCallback((e: React.MouseEvent) => {
+  // Unified handler for both mouse and touch start
+  const handlePointerDown = useCallback((clientX: number, clientY: number) => {
     if (disabled) return
-    e.preventDefault()
     setIsDragging(true)
-    lastAngle.current = getAngleFromCenter(e.clientX, e.clientY)
+    lastAngle.current = getAngleFromCenter(clientX, clientY)
   }, [disabled, getAngleFromCenter])
+
+  const handleMouseDown = useCallback((e: React.MouseEvent) => {
+    e.preventDefault()
+    handlePointerDown(e.clientX, e.clientY)
+  }, [handlePointerDown])
+
+  const handleTouchStart = useCallback((e: React.TouchEvent) => {
+    e.preventDefault()
+    const touch = e.touches[0]
+    if (touch) {
+      handlePointerDown(touch.clientX, touch.clientY)
+    }
+  }, [handlePointerDown])
 
   useEffect(() => {
     if (!isDragging) return
 
-    const handleMouseMove = (e: MouseEvent) => {
-      const currentAngle = getAngleFromCenter(e.clientX, e.clientY)
+    // Unified move handler
+    const handleMove = (clientX: number, clientY: number) => {
+      const currentAngle = getAngleFromCenter(clientX, clientY)
       if (currentAngle === null || lastAngle.current === null) return
 
       // Calculate angle delta
@@ -72,19 +86,39 @@ function WeirdnessKnob({ value, onChange, onChangeComplete, disabled = false }: 
       lastAngle.current = currentAngle
     }
 
-    const handleMouseUp = () => {
+    const handleMouseMove = (e: MouseEvent) => {
+      handleMove(e.clientX, e.clientY)
+    }
+
+    const handleTouchMove = (e: TouchEvent) => {
+      e.preventDefault() // Prevent scrolling while dragging
+      const touch = e.touches[0]
+      if (touch) {
+        handleMove(touch.clientX, touch.clientY)
+      }
+    }
+
+    const handleEnd = () => {
       setIsDragging(false)
       lastAngle.current = null
       // Fire onChangeComplete when user releases
       onChangeComplete?.(valueRef.current)
     }
 
+    // Mouse events
     document.addEventListener('mousemove', handleMouseMove)
-    document.addEventListener('mouseup', handleMouseUp)
+    document.addEventListener('mouseup', handleEnd)
+    // Touch events
+    document.addEventListener('touchmove', handleTouchMove, { passive: false })
+    document.addEventListener('touchend', handleEnd)
+    document.addEventListener('touchcancel', handleEnd)
 
     return () => {
       document.removeEventListener('mousemove', handleMouseMove)
-      document.removeEventListener('mouseup', handleMouseUp)
+      document.removeEventListener('mouseup', handleEnd)
+      document.removeEventListener('touchmove', handleTouchMove)
+      document.removeEventListener('touchend', handleEnd)
+      document.removeEventListener('touchcancel', handleEnd)
     }
   }, [isDragging, onChange, onChangeComplete, getAngleFromCenter])
 
@@ -163,9 +197,10 @@ function WeirdnessKnob({ value, onChange, onChangeComplete, disabled = false }: 
         <div
           ref={knobRef}
           onMouseDown={handleMouseDown}
+          onTouchStart={handleTouchStart}
           onWheel={handleWheel}
           className={`
-            relative h-12 w-12 select-none
+            relative h-12 w-12 select-none touch-none
             ${disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-grab'}
             ${isDragging ? 'cursor-grabbing' : ''}
           `}
