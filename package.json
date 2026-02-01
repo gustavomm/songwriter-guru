@@ -1,0 +1,32 @@
+{
+  "name": "songwriter-guru",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Record a guitar riff and get harmonic field + chord suggestions",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@spotify/basic-pitch": "^1.0.1",
+    "@tensorflow/tfjs": "^4.22.0",
+    "@tonaljs/key": "^4.11.2",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4",
+    "tonal": "^6.4.3"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.1.18",
+    "@types/react": "^19.2.10",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^5.1.2",
+    "tailwindcss": "^4.1.18",
+    "typescript": "^5.9.3",
+    "vite": "^7.3.1"
+  }
+}
