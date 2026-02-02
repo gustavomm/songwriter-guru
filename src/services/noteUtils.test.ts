@@ -95,13 +95,32 @@ describe('noteUtils', () => {
       expect(noteNameToMidi('X5')).toBe(60)
     })
 
-    it('handles edge cases', () => {
-      // Note: B# and Cb are treated simply - no octave adjustment
-      // The implementation uses a simple lookup table approach
-      expect(noteNameToMidi('B#4')).toBe(60) // B# maps to pitch class 0, octave 4 = MIDI 60
-      expect(noteNameToMidi('Cb4')).toBe(71) // Cb maps to pitch class 11 (B), octave 4 = MIDI 71
-      expect(noteNameToMidi('E#4')).toBe(65) // E# = F4
-      expect(noteNameToMidi('Fb4')).toBe(64) // Fb = E4
+    it('handles edge cases with enharmonic equivalents', () => {
+      // B# is enharmonically C of the NEXT octave
+      expect(noteNameToMidi('B#4')).toBe(72) // B#4 = C5 = MIDI 72
+      // Cb is enharmonically B of the PREVIOUS octave
+      expect(noteNameToMidi('Cb4')).toBe(59) // Cb4 = B3 = MIDI 59
+      // E# is enharmonically F (same octave)
+      expect(noteNameToMidi('E#4')).toBe(65) // E#4 = F4 = MIDI 65
+      // Fb is enharmonically E (same octave)
+      expect(noteNameToMidi('Fb4')).toBe(64) // Fb4 = E4 = MIDI 64
+    })
+
+    it('handles double sharps', () => {
+      expect(noteNameToMidi('C##4')).toBe(62) // C##4 = D4 = MIDI 62
+      expect(noteNameToMidi('F##4')).toBe(67) // F##4 = G4 = MIDI 67
+      expect(noteNameToMidi('G##4')).toBe(69) // G##4 = A4 = MIDI 69
+    })
+
+    it('handles double flats', () => {
+      expect(noteNameToMidi('Dbb4')).toBe(60) // Dbb4 = C4 = MIDI 60
+      expect(noteNameToMidi('Ebb4')).toBe(62) // Ebb4 = D4 = MIDI 62
+      expect(noteNameToMidi('Bbb4')).toBe(69) // Bbb4 = A4 = MIDI 69
+    })
+
+    it('handles x notation for double sharp', () => {
+      expect(noteNameToMidi('Cx4')).toBe(62) // Cx4 = D4 = MIDI 62
+      expect(noteNameToMidi('Fx4')).toBe(67) // Fx4 = G4 = MIDI 67
     })
   })
 
@@ -220,6 +239,28 @@ describe('noteUtils', () => {
     it('handles edge case flats', () => {
       expect(noteToPitchClass('Fb')).toBe(4) // Same as E
       expect(noteToPitchClass('Cb')).toBe(11) // Same as B
+    })
+
+    it('handles edge case sharps', () => {
+      expect(noteToPitchClass('E#')).toBe(5) // Same as F
+      expect(noteToPitchClass('B#')).toBe(0) // Same as C
+    })
+
+    it('handles double sharps', () => {
+      expect(noteToPitchClass('C##')).toBe(2) // Same as D
+      expect(noteToPitchClass('F##')).toBe(7) // Same as G
+      expect(noteToPitchClass('G##')).toBe(9) // Same as A
+    })
+
+    it('handles double flats', () => {
+      expect(noteToPitchClass('Dbb')).toBe(0) // Same as C
+      expect(noteToPitchClass('Ebb')).toBe(2) // Same as D
+      expect(noteToPitchClass('Bbb')).toBe(9) // Same as A
+    })
+
+    it('handles x notation for double sharp', () => {
+      expect(noteToPitchClass('Cx')).toBe(2) // Same as D
+      expect(noteToPitchClass('Fx')).toBe(7) // Same as G
     })
 
     it('returns 0 for unknown notes', () => {

@@ -58,6 +58,20 @@ export function ProgressionCard({
               borrowed
             </span>
           )}
+          {progression.containsColorChord &&
+            !progression.containsSecondaryDominant &&
+            !progression.containsBorrowedChord && (
+              <span className="rounded-full bg-sky-500/20 px-2 py-0.5 text-xs font-medium text-sky-400">
+                colorful
+              </span>
+            )}
+          {!progression.containsSecondaryDominant &&
+            !progression.containsBorrowedChord &&
+            !progression.containsColorChord && (
+              <span className="rounded-full bg-emerald-500/20 px-2 py-0.5 text-xs font-medium text-emerald-400">
+                diatonic
+              </span>
+            )}
         </div>
         <div className="rounded-full bg-emerald-500/20 px-2 py-0.5 text-xs font-medium text-emerald-400">
           {Math.round(progression.score * 100)}%

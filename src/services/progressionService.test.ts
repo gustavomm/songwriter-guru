@@ -160,16 +160,22 @@ describe('progressionService', () => {
       const chords = generateChordSuggestions(cMajorField, cMajorFeatures)
       const progressions = generateProgressions(cMajorField, chords, cMajorFeatures)
 
-      // Check that we have progressions starting with tonic (I)
-      const startsWithTonic = progressions.some((p) => p.romans[0] === 'I')
+      // Check that we have progressions starting with tonic (I or tonic-function chord)
+      const startsWithTonic = progressions.some(
+        (p) => p.romans[0] === 'I' || p.romans[0] === 'I7' || p.slots[0]?.chosen.function === 'T'
+      )
       expect(startsWithTonic).toBe(true)
 
-      // Check that we have progressions containing dominant (V)
-      const containsDominant = progressions.some((p) => p.romans.includes('V'))
+      // Check that we have progressions containing dominant function (V, V7, vii°, etc.)
+      const containsDominant = progressions.some((p) =>
+        p.slots.some((slot) => slot.chosen.function === 'D')
+      )
       expect(containsDominant).toBe(true)
 
-      // Check that we have progressions containing subdominant (IV)
-      const containsSubdominant = progressions.some((p) => p.romans.includes('IV'))
+      // Check that we have progressions containing subdominant function (ii, IV, etc.)
+      const containsSubdominant = progressions.some((p) =>
+        p.slots.some((slot) => slot.chosen.function === 'SD')
+      )
       expect(containsSubdominant).toBe(true)
     })
 

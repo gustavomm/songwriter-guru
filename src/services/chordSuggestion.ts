@@ -750,6 +750,12 @@ export function formatChordSymbol(rootOrSymbol: string, type?: string): string {
     if (type === 'maj7' || type === 'major seventh') return `${root}maj7`
     if (type === 'm7' || type === 'minor seventh') return `${root}m7`
     if (type === 'aug' || type === 'augmented') return `${root}+`
+    if (type === 'aug7' || type === '+7') return `${root}+7`
+    // Note: Tonal calls aug+maj7 "augmented seventh"
+    if (type === 'augmaj7' || type === '+maj7' || type === 'augmented seventh')
+      return `${root}+maj7`
+    // Minor/major seventh (minMaj7)
+    if (type === 'mM7' || type === 'mMaj7' || type === 'minor/major seventh') return `${root}mM7`
     if (type === 'sus4' || type === 'suspended fourth') return `${root}sus4`
     if (type === 'sus2' || type === 'suspended second') return `${root}sus2`
     return `${root}${type}`
@@ -766,7 +772,12 @@ export function formatChordSymbol(rootOrSymbol: string, type?: string): string {
   // Map Tonal types to display format
   switch (chordType) {
     case 'major':
+      return root
     case '':
+      // Empty type - check if it's an augmented dominant 7th (Tonal doesn't set a type for this)
+      if (chord.quality === 'Augmented' && chord.intervals?.includes('7m')) {
+        return `${root}+7`
+      }
       return root
     case 'minor':
       return `${root}m`
@@ -785,6 +796,12 @@ export function formatChordSymbol(rootOrSymbol: string, type?: string): string {
       return `${root}m7`
     case 'augmented':
       return `${root}+`
+    case 'augmented seventh':
+      // Tonal calls aug+maj7 "augmented seventh"
+      return `${root}+maj7`
+    case 'minor/major seventh':
+      // Minor chord with major 7th (minMaj7)
+      return `${root}mM7`
     case 'suspended fourth':
       return `${root}sus4`
     case 'suspended second':

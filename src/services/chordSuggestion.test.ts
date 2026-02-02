@@ -116,6 +116,15 @@ describe('chordSuggestion', () => {
 
     it('formats augmented chords with + symbol', () => {
       expect(formatChordSymbol('Caug')).toBe('C+')
+      expect(formatChordSymbol('Gaug7')).toBe('G+7')
+      expect(formatChordSymbol('G+7')).toBe('G+7')
+      expect(formatChordSymbol('D+maj7')).toBe('D+maj7')
+    })
+
+    it('formats minor/major seventh chords correctly', () => {
+      expect(formatChordSymbol('CmMaj7')).toBe('CmM7')
+      expect(formatChordSymbol('C', 'minor/major seventh')).toBe('CmM7')
+      expect(formatChordSymbol('G', 'mM7')).toBe('GmM7')
     })
 
     it('formats suspended chords correctly', () => {

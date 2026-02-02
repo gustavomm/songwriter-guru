@@ -12,42 +12,71 @@ export function midiToFrequency(midi: number): number {
 
 /**
  * Convert note name to MIDI number (e.g., "C4" -> 60, "A#3" -> 58)
- * Default octave is 4 if not specified
+ * Default octave is 4 if not specified.
+ *
+ * Handles:
+ * - Natural notes: C, D, E, F, G, A, B
+ * - Single sharps/flats: C#, Db, etc.
+ * - Double sharps: C##, Fx (x = double sharp)
+ * - Double flats: Cbb
+ * - Enharmonic edge cases: E#, B#, Fb, Cb
  */
 export function noteNameToMidi(noteName: string): number {
-  const noteMap: Record<string, number> = {
+  // Base semitone values for natural notes
+  const naturalNotes: Record<string, number> = {
     C: 0,
-    'C#': 1,
-    Db: 1,
     D: 2,
-    'D#': 3,
-    Eb: 3,
     E: 4,
-    Fb: 4,
-    'E#': 5,
     F: 5,
-    'F#': 6,
-    Gb: 6,
     G: 7,
-    'G#': 8,
-    Ab: 8,
     A: 9,
-    'A#': 10,
-    Bb: 10,
     B: 11,
-    Cb: 11,
-    'B#': 0,
   }
 
-  // Parse note name and octave
-  const match = noteName.match(/^([A-Ga-g][#b]?)(\d)?$/)
+  // Parse note name and octave - handles ##, x (double sharp), bb, #, b
+  const match = noteName.match(/^([A-Ga-g])(##|x|bb|#|b)?(\d)?$/)
   if (!match) return 60 // Default to middle C
 
-  const note = match[1].charAt(0).toUpperCase() + match[1].slice(1)
-  const octave = match[2] ? parseInt(match[2]) : 4
+  const baseName = match[1].toUpperCase()
+  const accidental = match[2] || ''
+  const octave = match[3] ? parseInt(match[3]) : 4
 
-  const semitone = noteMap[note] ?? 0
-  return (octave + 1) * 12 + semitone
+  // Get base semitone from natural note
+  const baseSemitone = naturalNotes[baseName]
+  if (baseSemitone === undefined) return 60
+
+  // Calculate accidental offset
+  let accidentalOffset = 0
+  switch (accidental) {
+    case '#':
+      accidentalOffset = 1
+      break
+    case '##':
+    case 'x':
+      accidentalOffset = 2
+      break
+    case 'b':
+      accidentalOffset = -1
+      break
+    case 'bb':
+      accidentalOffset = -2
+      break
+  }
+
+  // Calculate final semitone (with wrapping for edge cases like B# -> C, Cb -> B)
+  const semitone = (baseSemitone + accidentalOffset + 12) % 12
+
+  // Handle octave adjustment for enharmonic edge cases:
+  // B# is enharmonically C of the NEXT octave
+  // Cb is enharmonically B of the PREVIOUS octave
+  let adjustedOctave = octave
+  if (baseName === 'B' && accidentalOffset > 0 && baseSemitone + accidentalOffset >= 12) {
+    adjustedOctave += 1
+  } else if (baseName === 'C' && accidentalOffset < 0 && baseSemitone + accidentalOffset < 0) {
+    adjustedOctave -= 1
+  }
+
+  return (adjustedOctave + 1) * 12 + semitone
 }
 
 /**
@@ -63,34 +92,57 @@ export function midiToNoteName(midi: number): string {
 /**
  * Convert a note name (without octave) to its pitch class (0-11).
  * C = 0, C# = 1, D = 2, ..., B = 11
- * Handles flats by converting to sharp equivalents.
+ *
+ * Handles:
+ * - Natural notes: C, D, E, F, G, A, B
+ * - Single sharps/flats: C#, Db, etc.
+ * - Double sharps: C##, Fx (x = double sharp)
+ * - Double flats: Cbb
+ * - Enharmonic edge cases: E#, B#, Fb, Cb
  */
 export function noteToPitchClass(note: string): number {
-  const flatToSharp: Record<string, string> = {
-    Db: 'C#',
-    Eb: 'D#',
-    Fb: 'E',
-    Gb: 'F#',
-    Ab: 'G#',
-    Bb: 'A#',
-    Cb: 'B',
-  }
-  const normalized = flatToSharp[note] || note
-  const noteMap: Record<string, number> = {
+  // Base semitone values for natural notes
+  const naturalNotes: Record<string, number> = {
     C: 0,
-    'C#': 1,
     D: 2,
-    'D#': 3,
     E: 4,
     F: 5,
-    'F#': 6,
     G: 7,
-    'G#': 8,
     A: 9,
-    'A#': 10,
     B: 11,
   }
-  return noteMap[normalized] ?? 0
+
+  // Parse note name - handles ##, x (double sharp), bb, #, b
+  const match = note.match(/^([A-Ga-g])(##|x|bb|#|b)?$/)
+  if (!match) return 0 // Default to C
+
+  const baseName = match[1].toUpperCase()
+  const accidental = match[2] || ''
+
+  // Get base semitone from natural note
+  const baseSemitone = naturalNotes[baseName]
+  if (baseSemitone === undefined) return 0
+
+  // Calculate accidental offset
+  let accidentalOffset = 0
+  switch (accidental) {
+    case '#':
+      accidentalOffset = 1
+      break
+    case '##':
+    case 'x':
+      accidentalOffset = 2
+      break
+    case 'b':
+      accidentalOffset = -1
+      break
+    case 'bb':
+      accidentalOffset = -2
+      break
+  }
+
+  // Calculate final pitch class (0-11) with wrapping
+  return (baseSemitone + accidentalOffset + 12) % 12
 }
 
 /**
