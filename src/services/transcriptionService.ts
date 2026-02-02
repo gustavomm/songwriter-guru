@@ -12,7 +12,12 @@ import type {
   TranscriptionPreset,
 } from '../domain/types'
 import { prepareAudioForTranscription, prepareRawPcmForTranscription } from './audioDecoder'
-import { limitPolyphony, smartMergeNotes, DEFAULT_MAX_POLYPHONY } from './noteProcessing'
+import {
+  limitPolyphony,
+  smartMergeNotes,
+  filterIsolatedNoiseNotes,
+  DEFAULT_MAX_POLYPHONY,
+} from './noteProcessing'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Constants
@@ -30,16 +35,22 @@ const MODEL_PATH = `${import.meta.env.BASE_URL}basic-pitch-model/model.json`
 // - Higher values = fewer notes detected (stricter)
 // - Lower values = more notes detected (more sensitive)
 // ─────────────────────────────────────────────────────────────────────────────
-// Detection thresholds
-const ONSET_THRESHOLD = 0.4 // Range: 0.2 (sensitive) to 0.6 (strict)
-// Note: frameThresh is set to null in outputToNotesPoly for adaptive detection
-// (computed from mean + std of frames, more robust across different recordings)
+
+// Detection thresholds - TUNED FOR LESS NOISE
+// Onset threshold: 0.5 is the default, higher = stricter onset detection
+const ONSET_THRESHOLD = 0.5 // Range: 0.3 (sensitive) to 0.7 (strict)
+
+// Frame threshold: explicit value for more consistent detection
+// 0.3 is default, higher = requires stronger pitch activation
+const FRAME_THRESHOLD = 0.35 // Range: 0.2 (sensitive) to 0.5 (strict)
 
 // Basic Pitch timing: 22050Hz sample rate, 256-sample hop
 // → ~86 frames/sec → ~11.6ms per frame
-// 11 frames ≈ 128ms (matches Basic Pitch's default minimum note length)
-const MIN_NOTE_LENGTH = 11 // Frames (~11.6ms each, total ~128ms)
-const ENERGY_TOLERANCE = 10
+// 13 frames ≈ 150ms - slightly longer minimum to filter out noise spikes
+const MIN_NOTE_LENGTH = 13 // Frames (~11.6ms each, total ~150ms)
+
+// Energy tolerance: how quickly a note can decay before being cut off
+const ENERGY_TOLERANCE = 11
 
 // Guitar frequency range (for filtering false positives)
 // Low: ~70Hz supports drop tunings (Drop D low is ~73Hz, Drop C is ~65Hz)
@@ -48,7 +59,12 @@ const GUITAR_MIN_FREQ = 70 // Hz - supports drop tunings
 const GUITAR_MAX_FREQ = 2500 // Hz - high frets + harmonics
 
 // Amplitude floor for filtering weak/hallucinated notes
-const MIN_AMPLITUDE = 0.25
+// INCREASED from 0.25 to filter more aggressively
+const MIN_AMPLITUDE = 0.35
+
+// Minimum note duration in seconds (post-processing filter)
+// Notes shorter than this are likely noise artifacts
+const MIN_NOTE_DURATION_SEC = 0.08 // 80ms minimum
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Custom Error for Cancellation
@@ -225,12 +241,17 @@ class TranscriptionServiceImpl {
       const inferOnsets = preset === 'lead'
       const melodiaTrick = preset === 'lead'
 
+      // Adjust thresholds based on preset
+      // Chord mode uses slightly higher thresholds to reduce noise from strumming
+      const effectiveOnsetThresh = preset === 'chord' ? ONSET_THRESHOLD + 0.05 : ONSET_THRESHOLD
+      const effectiveFrameThresh = preset === 'chord' ? FRAME_THRESHOLD + 0.05 : FRAME_THRESHOLD
+
       // Convert frames/onsets to note events using tuning constants
       const noteEvents = outputToNotesPoly(
         allFrames,
         allOnsets,
-        ONSET_THRESHOLD,
-        undefined, // frameThresh: undefined = adaptive (computed from mean+std of frames)
+        effectiveOnsetThresh,
+        effectiveFrameThresh, // Use explicit frame threshold for consistent detection
         MIN_NOTE_LENGTH,
         inferOnsets, // preset-dependent: helps detect notes without clear attacks
         GUITAR_MAX_FREQ, // maxFreq: filter high-frequency artifacts
@@ -250,8 +271,17 @@ class TranscriptionServiceImpl {
       // Convert to timed notes
       const allTimedNotes = noteFramesToTime(notesWithBends)
 
-      // Filter out weak/hallucinated notes based on amplitude
-      const timedNotes = allTimedNotes.filter((note) => note.amplitude >= MIN_AMPLITUDE)
+      // Filter out weak/hallucinated notes based on amplitude AND duration
+      // This two-stage filter catches both quiet noise and short spikes
+      const timedNotes = allTimedNotes.filter((note) => {
+        // Filter 1: Amplitude must be above minimum
+        if (note.amplitude < MIN_AMPLITUDE) return false
+
+        // Filter 2: Duration must be above minimum
+        if (note.durationSeconds < MIN_NOTE_DURATION_SEC) return false
+
+        return true
+      })
 
       // Step 5: Convert to our TranscribedNote format
       onProgress?.(95, 'Finalizing...')
@@ -295,8 +325,9 @@ class TranscriptionServiceImpl {
  *
  * Processing pipeline:
  * 1. Convert to our TranscribedNote format
- * 2. Apply polyphony limit (max 6 simultaneous notes for guitar)
- * 3. Smart merge with pitch bend awareness
+ * 2. Filter isolated noise notes (weak notes with no neighbors)
+ * 3. Apply polyphony limit (max 6 simultaneous notes for guitar)
+ * 4. Smart merge with pitch bend awareness
  */
 function convertToTranscribedNotes(
   timedNotes: NoteEventTime[],
@@ -313,10 +344,13 @@ function convertToTranscribedNotes(
     }))
     .sort((a, b) => a.startSec - b.startSec)
 
-  // Step 2: Apply polyphony limit (filter hallucinated harmonics/artifacts)
-  const polyLimited = limitPolyphony(notes, DEFAULT_MAX_POLYPHONY)
+  // Step 2: Filter isolated noise notes (weak notes far from other notes)
+  const noiseFiltered = filterIsolatedNoiseNotes(notes)
 
-  // Step 3: Smart merge with pitch bend awareness
+  // Step 3: Apply polyphony limit (filter hallucinated harmonics/artifacts)
+  const polyLimited = limitPolyphony(noiseFiltered, DEFAULT_MAX_POLYPHONY)
+
+  // Step 4: Smart merge with pitch bend awareness
   const merged = smartMergeNotes(polyLimited)
 
   return merged

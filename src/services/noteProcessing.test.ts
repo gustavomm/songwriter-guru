@@ -7,8 +7,11 @@ import {
   smartMergeNotes,
   concatenatePitchBends,
   hasSignificantPitchBend,
+  filterIsolatedNoiseNotes,
   DEFAULT_MAX_POLYPHONY,
   DEFAULT_MERGE_TIME_THRESHOLD,
+  ISOLATED_NOTE_THRESHOLD,
+  ISOLATED_NOTE_MIN_VELOCITY,
 } from './noteProcessing'
 import type { TranscribedNote } from '../domain/types'
 
@@ -339,6 +342,77 @@ describe('noteProcessing', () => {
       const notes = [createNote(0, 1, 60, 0.5, [0.1, 0.2]), createNote(1, 2, 60, 0.5, [0.3])]
       const result = mergeConsecutiveSamePitch(notes)
       expect(result[0].pitchBend).toEqual([0.1, 0.2, 0.3])
+    })
+  })
+
+  describe('filterIsolatedNoiseNotes', () => {
+    it('returns empty array for empty input', () => {
+      expect(filterIsolatedNoiseNotes([])).toEqual([])
+    })
+
+    it('returns single note unchanged', () => {
+      // Single notes are always kept (no comparison possible)
+      const notes = [createNote(0, 1, 60, 0.3)]
+      const result = filterIsolatedNoiseNotes(notes)
+      expect(result.length).toBe(1)
+    })
+
+    it('keeps notes with neighbors regardless of velocity', () => {
+      // Notes close together (within threshold) are kept even with low velocity
+      const notes = [
+        createNote(0, 0.5, 60, 0.3), // Low velocity but has neighbor
+        createNote(0.4, 1, 62, 0.3), // Low velocity but has neighbor
+      ]
+      const result = filterIsolatedNoiseNotes(notes, 0.3, 0.45)
+      expect(result.length).toBe(2)
+    })
+
+    it('filters isolated notes with low velocity', () => {
+      // Isolated weak note should be filtered
+      const notes = [
+        createNote(0, 0.5, 60, 0.6), // Strong note
+        createNote(2, 2.5, 62, 0.3), // Weak isolated note (1.5s gap)
+        createNote(4, 4.5, 64, 0.6), // Strong note
+      ]
+      const result = filterIsolatedNoiseNotes(notes, 0.3, 0.45)
+      expect(result.length).toBe(2)
+      expect(result.some((n) => n.midi === 62)).toBe(false)
+    })
+
+    it('keeps isolated notes with high velocity', () => {
+      // Isolated strong note should be kept
+      const notes = [
+        createNote(0, 0.5, 60, 0.6),
+        createNote(2, 2.5, 62, 0.5), // Strong isolated note
+        createNote(4, 4.5, 64, 0.6),
+      ]
+      const result = filterIsolatedNoiseNotes(notes, 0.3, 0.45)
+      expect(result.length).toBe(3)
+    })
+
+    it('uses default thresholds', () => {
+      expect(ISOLATED_NOTE_THRESHOLD).toBe(0.3)
+      expect(ISOLATED_NOTE_MIN_VELOCITY).toBe(0.45)
+    })
+
+    it('considers overlapping notes as neighbors', () => {
+      // Overlapping notes should count as having neighbors
+      const notes = [
+        createNote(0, 1, 60, 0.6),
+        createNote(0.5, 1.5, 62, 0.3), // Low velocity but overlaps with first
+      ]
+      const result = filterIsolatedNoiseNotes(notes, 0.3, 0.45)
+      expect(result.length).toBe(2)
+    })
+
+    it('considers notes ending near each other as neighbors', () => {
+      // Notes that end near each other should count as neighbors
+      const notes = [
+        createNote(0, 1, 60, 0.6),
+        createNote(0.8, 1.1, 62, 0.3), // Low velocity but ends near first
+      ]
+      const result = filterIsolatedNoiseNotes(notes, 0.3, 0.45)
+      expect(result.length).toBe(2)
     })
   })
 

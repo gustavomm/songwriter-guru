@@ -18,6 +18,10 @@ export const SIGNIFICANT_BEND_THRESHOLD = 0.3 // semitones
 export const DEFAULT_MERGE_TIME_THRESHOLD = 0.15 // Max gap (seconds) to consider notes as "connected"
 export const DEFAULT_WOBBLE_SEMITONES = 1 // Pitch deviation to consider as wobble (half-step)
 
+// Noise filtering thresholds
+export const ISOLATED_NOTE_THRESHOLD = 0.3 // seconds - notes with no neighbors within this are "isolated"
+export const ISOLATED_NOTE_MIN_VELOCITY = 0.45 // isolated notes below this velocity are filtered
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Helper Functions
 // ─────────────────────────────────────────────────────────────────────────────
@@ -45,6 +49,58 @@ export function hasSignificantPitchBend(
 ): boolean {
   if (!note.pitchBend || note.pitchBend.length === 0) return false
   return note.pitchBend.some((bend) => Math.abs(bend) > threshold)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Isolated Note Filtering (Noise Reduction)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Filter out isolated weak notes that are likely noise artifacts.
+ *
+ * An "isolated" note is one that has no other notes starting or ending
+ * within a certain time threshold, and doesn't overlap with other notes.
+ * If such a note also has low velocity, it's likely a false detection
+ * from background noise.
+ *
+ * Notes that are part of a chord or phrase (have neighbors) are kept
+ * even with lower velocity, as they're more likely to be real.
+ */
+export function filterIsolatedNoiseNotes(
+  notes: TranscribedNote[],
+  isolationThreshold: number = ISOLATED_NOTE_THRESHOLD,
+  minVelocityForIsolated: number = ISOLATED_NOTE_MIN_VELOCITY
+): TranscribedNote[] {
+  if (notes.length <= 1) return notes
+
+  return notes.filter((note, index) => {
+    // Check if this note has any neighbors within the threshold
+    const hasNeighbors = notes.some((other, otherIndex) => {
+      if (index === otherIndex) return false
+
+      // Check 1: Do the notes overlap? (one starts before the other ends)
+      const overlaps = note.startSec < other.endSec && other.startSec < note.endSec
+      if (overlaps) return true
+
+      // Check 2: Are the start times close?
+      if (Math.abs(other.startSec - note.startSec) < isolationThreshold) return true
+
+      // Check 3: Are the end times close?
+      if (Math.abs(other.endSec - note.endSec) < isolationThreshold) return true
+
+      // Check 4: Does one end as another starts (sequential)?
+      if (Math.abs(other.startSec - note.endSec) < isolationThreshold) return true
+      if (Math.abs(other.endSec - note.startSec) < isolationThreshold) return true
+
+      return false
+    })
+
+    // If the note has neighbors, keep it regardless of velocity
+    if (hasNeighbors) return true
+
+    // Isolated note: only keep if velocity is above threshold
+    return (note.velocity ?? 0) >= minVelocityForIsolated
+  })
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

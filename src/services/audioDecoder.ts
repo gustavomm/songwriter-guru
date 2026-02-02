@@ -1,5 +1,6 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // Audio Decoder: Blob → AudioBuffer
+// Includes pre-processing for improved transcription accuracy
 // ─────────────────────────────────────────────────────────────────────────────
 
 export interface DecodedAudio {
@@ -7,6 +8,21 @@ export interface DecodedAudio {
   sampleRate: number
   durationMs: number
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Audio Pre-processing Constants
+// ─────────────────────────────────────────────────────────────────────────────
+
+// High-pass filter to remove low-frequency rumble (below guitar's low E ~82Hz)
+// Using 60Hz to allow for drop tunings
+const HIGH_PASS_FREQUENCY = 60
+
+// Low-pass filter to remove high-frequency hiss/noise (above guitar's useful range)
+const LOW_PASS_FREQUENCY = 4000
+
+// Noise gate threshold (RMS below this is considered silence/noise)
+// Expressed as a fraction of the signal's peak amplitude
+const NOISE_GATE_THRESHOLD = 0.02
 
 /**
  * Decode an audio Blob into an AudioBuffer using the Web Audio API.
@@ -98,6 +114,97 @@ export async function resampleAudio(
 }
 
 /**
+ * Apply a biquad filter to an AudioBuffer.
+ * Used for high-pass and low-pass filtering.
+ */
+async function applyBiquadFilter(
+  audioBuffer: AudioBuffer,
+  filterType: BiquadFilterType,
+  frequency: number
+): Promise<AudioBuffer> {
+  const offlineContext = new OfflineAudioContext(
+    audioBuffer.numberOfChannels,
+    audioBuffer.length,
+    audioBuffer.sampleRate
+  )
+
+  // Create source
+  const source = offlineContext.createBufferSource()
+  source.buffer = audioBuffer
+
+  // Create filter
+  const filter = offlineContext.createBiquadFilter()
+  filter.type = filterType
+  filter.frequency.value = frequency
+  filter.Q.value = 0.707 // Butterworth response (flat passband)
+
+  // Connect: source -> filter -> destination
+  source.connect(filter)
+  filter.connect(offlineContext.destination)
+  source.start(0)
+
+  return offlineContext.startRendering()
+}
+
+/**
+ * Apply a simple noise gate to audio data.
+ * Reduces samples below the threshold to zero.
+ */
+function applyNoiseGate(audioData: Float32Array, threshold: number): Float32Array {
+  // Find peak amplitude
+  let peak = 0
+  for (let i = 0; i < audioData.length; i++) {
+    const abs = Math.abs(audioData[i])
+    if (abs > peak) peak = abs
+  }
+
+  // Calculate absolute threshold
+  const absThreshold = peak * threshold
+
+  // Apply gate with smoothing (to avoid clicks)
+  const result = new Float32Array(audioData.length)
+  const smoothingWindow = 64 // samples for smoothing
+
+  for (let i = 0; i < audioData.length; i++) {
+    // Calculate local RMS for gate decision
+    let sumSquares = 0
+    const windowStart = Math.max(0, i - smoothingWindow)
+    const windowEnd = Math.min(audioData.length, i + smoothingWindow)
+    for (let j = windowStart; j < windowEnd; j++) {
+      sumSquares += audioData[j] * audioData[j]
+    }
+    const rms = Math.sqrt(sumSquares / (windowEnd - windowStart))
+
+    // Apply soft gate (smooth transition)
+    if (rms < absThreshold) {
+      // Below threshold - attenuate based on how far below
+      const attenuation = rms / absThreshold
+      result[i] = audioData[i] * attenuation * attenuation // Quadratic for smoother gate
+    } else {
+      result[i] = audioData[i]
+    }
+  }
+
+  return result
+}
+
+/**
+ * Pre-process audio for transcription:
+ * 1. High-pass filter to remove rumble
+ * 2. Low-pass filter to remove hiss
+ * 3. Noise gate to reduce background noise
+ */
+async function preprocessAudioBuffer(audioBuffer: AudioBuffer): Promise<AudioBuffer> {
+  // Step 1: High-pass filter (remove low-frequency rumble)
+  let processed = await applyBiquadFilter(audioBuffer, 'highpass', HIGH_PASS_FREQUENCY)
+
+  // Step 2: Low-pass filter (remove high-frequency hiss)
+  processed = await applyBiquadFilter(processed, 'lowpass', LOW_PASS_FREQUENCY)
+
+  return processed
+}
+
+/**
  * Full pipeline: Decode blob, convert to mono, resample to target rate.
  * Returns the processed Float32Array ready for Basic Pitch.
  *
@@ -116,11 +223,17 @@ export async function prepareAudioForTranscription(
   // Step 1: Decode the blob
   const { audioBuffer, sampleRate, durationMs } = await decodeAudioBlob(blob)
 
-  // Step 2: Resample to target rate (Basic Pitch expects 22050Hz)
-  const resampledBuffer = await resampleAudio(audioBuffer, targetSampleRate)
+  // Step 2: Pre-process (filter noise)
+  const filteredBuffer = await preprocessAudioBuffer(audioBuffer)
 
-  // Step 3: Convert to mono Float32Array
-  const audioData = audioBufferToMono(resampledBuffer)
+  // Step 3: Resample to target rate (Basic Pitch expects 22050Hz)
+  const resampledBuffer = await resampleAudio(filteredBuffer, targetSampleRate)
+
+  // Step 4: Convert to mono Float32Array
+  let audioData = audioBufferToMono(resampledBuffer)
+
+  // Step 5: Apply noise gate
+  audioData = applyNoiseGate(audioData, NOISE_GATE_THRESHOLD)
 
   return {
     audioData,
@@ -135,6 +248,11 @@ export async function prepareAudioForTranscription(
  * This function takes raw PCM samples captured via AudioWorklet and resamples
  * them to the target sample rate for Basic Pitch. This bypasses MediaRecorder's
  * lossy compression for improved transcription accuracy.
+ *
+ * Includes pre-processing:
+ * - High-pass filter to remove rumble
+ * - Low-pass filter to remove hiss
+ * - Noise gate to reduce background noise
  *
  * @param pcmData - Raw PCM samples as Float32Array (mono)
  * @param sourceSampleRate - Sample rate of the input data (typically 44100 or 48000 Hz)
@@ -151,15 +269,6 @@ export async function prepareRawPcmForTranscription(
 }> {
   const durationMs = Math.round((pcmData.length / sourceSampleRate) * 1000)
 
-  // If already at target rate, return as-is
-  if (sourceSampleRate === targetSampleRate) {
-    return {
-      audioData: pcmData,
-      originalSampleRate: sourceSampleRate,
-      durationMs,
-    }
-  }
-
   // Create an AudioBuffer from the raw PCM data
   const audioContext = new AudioContext()
 
@@ -172,11 +281,17 @@ export async function prepareRawPcmForTranscription(
     )
     sourceBuffer.copyToChannel(new Float32Array(pcmData), 0)
 
-    // Resample to target rate
-    const resampledBuffer = await resampleAudio(sourceBuffer, targetSampleRate)
+    // Step 1: Pre-process (filter noise) - do this before resampling for better quality
+    const filteredBuffer = await preprocessAudioBuffer(sourceBuffer)
 
-    // Get the resampled data
-    const audioData = audioBufferToMono(resampledBuffer)
+    // Step 2: Resample to target rate
+    const resampledBuffer = await resampleAudio(filteredBuffer, targetSampleRate)
+
+    // Step 3: Convert to mono Float32Array
+    let audioData = audioBufferToMono(resampledBuffer)
+
+    // Step 4: Apply noise gate
+    audioData = applyNoiseGate(audioData, NOISE_GATE_THRESHOLD)
 
     return {
       audioData,
