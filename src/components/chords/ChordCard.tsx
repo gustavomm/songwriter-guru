@@ -1,3 +1,4 @@
+import { memo } from 'react'
 import { PlayIcon } from '../icons'
 import type { ChordSuggestion, ChordSource } from '../../domain/types'
 
@@ -27,7 +28,7 @@ interface ChordCardProps {
   onPlay: () => void
 }
 
-export function ChordCard({ chord, isPlaying, onPlay }: ChordCardProps) {
+export const ChordCard = memo(function ChordCard({ chord, isPlaying, onPlay }: ChordCardProps) {
   return (
     <div
       className={`group rounded-xl border p-3 transition-all ${
@@ -110,4 +111,4 @@ export function ChordCard({ chord, isPlaying, onPlay }: ChordCardProps) {
       </div>
     </div>
   )
-}
+})

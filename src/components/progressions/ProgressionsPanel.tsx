@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef, useEffect } from 'react'
+import { useState, useCallback, useRef, useEffect, useMemo } from 'react'
 import { useAppState } from '../../domain/state'
 import { midiPlayer } from '../../services/midiPlayer'
 import { generateProgressions } from '../../services/progressionService'
@@ -25,8 +25,11 @@ export function ProgressionsPanel() {
   const isLoading = ['decoding', 'transcribing'].includes(status)
   const hasResults = status === 'analyzed' && progressions && progressions.length > 0
 
-  // Get selected harmonic field candidate
-  const selectedCandidate = harmony?.candidates.find((c) => c.id === harmony.selectedCandidateId)
+  // Memoize selected harmonic field candidate to avoid recalculating on every render
+  const selectedCandidate = useMemo(
+    () => harmony?.candidates.find((c) => c.id === harmony.selectedCandidateId),
+    [harmony]
+  )
 
   // Regenerate progressions when knob is released
   const handleWeirdnessComplete = useCallback(
@@ -140,7 +143,7 @@ export function ProgressionsPanel() {
         >
           {progressions.map((progression, i) => (
             <ProgressionCard
-              key={i}
+              key={`${progression.chords.join('-')}-${i}`}
               progression={progression}
               rank={i + 1}
               isPlaying={playingIndex === i}

@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef } from 'react'
+import { useState, useCallback, useRef, useMemo } from 'react'
 import { useAppState } from '../../domain/state'
 import { midiPlayer } from '../../services/midiPlayer'
 import { GridIcon } from '../icons'
@@ -15,7 +15,8 @@ export function ChordsPanel() {
   const isLoading = ['decoding', 'transcribing'].includes(status)
   const hasResults = status === 'analyzed' && chords
 
-  const getVisibleChords = (): ChordSuggestion[] => {
+  // Memoize visible chords to avoid recalculating on every render
+  const visibleChords = useMemo((): ChordSuggestion[] => {
     if (!chords) return []
     switch (activeTab) {
       case 'diatonic':
@@ -27,9 +28,7 @@ export function ChordsPanel() {
       default:
         return chords.ranked
     }
-  }
-
-  const visibleChords = getVisibleChords()
+  }, [chords, activeTab])
 
   // Handle playing a chord
   const handlePlayChord = useCallback((chord: ChordSuggestion) => {
@@ -70,9 +69,9 @@ export function ChordsPanel() {
 
           {/* Chord Grid */}
           <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-            {visibleChords.map((chord, i) => (
+            {visibleChords.map((chord) => (
               <ChordCard
-                key={`${chord.symbol}-${chord.source}-${i}`}
+                key={chord.id}
                 chord={chord}
                 isPlaying={playingChordSymbol === chord.symbol}
                 onPlay={() => handlePlayChord(chord)}

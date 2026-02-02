@@ -1,3 +1,4 @@
+import { memo } from 'react'
 import { StopIcon, ScaleIcon, DroneIcon } from '../icons'
 import type { HarmonicFieldCandidate } from '../../domain/types'
 
@@ -11,7 +12,7 @@ interface FieldCardProps {
   onToggleDrone: () => void
 }
 
-export function FieldCard({
+export const FieldCard = memo(function FieldCard({
   candidate,
   isSelected,
   onSelect,
@@ -122,4 +123,4 @@ export function FieldCard({
       </div>
     </div>
   )
-}
+})

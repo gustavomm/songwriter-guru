@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useMemo } from 'react'
 import { useAppState, useAppDispatch } from '../../domain/state'
 import { useAudioRecorder } from '../../services/audioRecorder'
 import {
@@ -194,8 +194,8 @@ export function RecorderCard() {
     dispatch({ type: 'RESET' })
   }
 
-  // Helper text based on state
-  const getHelpText = () => {
+  // Helper text based on state - memoized for performance
+  const helpText = useMemo(() => {
     if (hasAnalysis && transcription) {
       return `${transcription.noteCount} notes • MIDI ${transcription.range.minMidi}-${transcription.range.maxMidi}`
     }
@@ -206,7 +206,7 @@ export function RecorderCard() {
       return 'Analyzing audio...'
     }
     return 'Click to record a short guitar riff (max 20 seconds)'
-  }
+  }, [hasAnalysis, transcription, hasRecording, isTranscribing])
 
   return (
     <div className="rounded-2xl border border-stone-800 bg-gradient-to-b from-stone-900 to-stone-900/50 p-4 shadow-xl shadow-black/20 sm:p-6">
@@ -277,9 +277,7 @@ export function RecorderCard() {
       />
 
       {/* Help Text */}
-      <p className="mt-10 text-center text-[10px] text-stone-600 sm:mt-12 sm:text-xs">
-        {getHelpText()}
-      </p>
+      <p className="mt-10 text-center text-[10px] text-stone-600 sm:mt-12 sm:text-xs">{helpText}</p>
 
       <HelpSection />
 

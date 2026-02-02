@@ -50,53 +50,59 @@ export function HarmonicFieldsPanel() {
     [features, dispatch]
   )
 
-  const handlePlayScale = (candidate: HarmonicFieldCandidate) => {
-    if (playingScaleId === candidate.id) {
-      // Stop current scale
-      midiPlayer.stopScale()
-      setPlayingScaleId(null)
-    } else {
-      // Stop any playing scale first
-      midiPlayer.stopScale()
-      setPlayingScaleId(candidate.id)
-
-      midiPlayer.playScale(candidate.scaleNotes, 4, 280, () => {
+  const handlePlayScale = useCallback(
+    (candidate: HarmonicFieldCandidate) => {
+      if (playingScaleId === candidate.id) {
+        // Stop current scale
+        midiPlayer.stopScale()
         setPlayingScaleId(null)
-      })
-    }
-  }
+      } else {
+        // Stop any playing scale first
+        midiPlayer.stopScale()
+        setPlayingScaleId(candidate.id)
 
-  const handleToggleDrone = (candidate: HarmonicFieldCandidate) => {
-    if (activeDroneId === candidate.id) {
-      // Stop drone
-      midiPlayer.stopDrone()
-      setActiveDroneId(null)
-      // Stop the audio playback if it's playing
-      if (audioRef.current) {
-        audioRef.current.pause()
-        audioRef.current.currentTime = 0
+        midiPlayer.playScale(candidate.scaleNotes, 4, 280, () => {
+          setPlayingScaleId(null)
+        })
       }
-    } else {
-      // Stop any existing drone
-      midiPlayer.stopDrone()
-      // Start new drone
-      midiPlayer.startDrone(candidate.tonic, 2, 0.2)
-      setActiveDroneId(candidate.id)
+    },
+    [playingScaleId]
+  )
 
-      // If we have a recording, play it alongside the drone
-      if (recording?.audioUrl) {
-        if (!audioRef.current) {
-          audioRef.current = new Audio()
+  const handleToggleDrone = useCallback(
+    (candidate: HarmonicFieldCandidate) => {
+      if (activeDroneId === candidate.id) {
+        // Stop drone
+        midiPlayer.stopDrone()
+        setActiveDroneId(null)
+        // Stop the audio playback if it's playing
+        if (audioRef.current) {
+          audioRef.current.pause()
+          audioRef.current.currentTime = 0
         }
-        audioRef.current.src = recording.audioUrl
-        audioRef.current.play()
-        // When audio ends, keep the drone playing so user can replay
-        audioRef.current.onended = () => {
-          // Keep drone playing - user can manually stop it
+      } else {
+        // Stop any existing drone
+        midiPlayer.stopDrone()
+        // Start new drone
+        midiPlayer.startDrone(candidate.tonic, 2, 0.2)
+        setActiveDroneId(candidate.id)
+
+        // If we have a recording, play it alongside the drone
+        if (recording?.audioUrl) {
+          if (!audioRef.current) {
+            audioRef.current = new Audio()
+          }
+          audioRef.current.src = recording.audioUrl
+          audioRef.current.play()
+          // When audio ends, keep the drone playing so user can replay
+          audioRef.current.onended = () => {
+            // Keep drone playing - user can manually stop it
+          }
         }
       }
-    }
-  }
+    },
+    [activeDroneId, recording?.audioUrl]
+  )
 
   return (
     <div className="rounded-2xl border border-stone-800 bg-gradient-to-b from-stone-900 to-stone-900/50 p-5 shadow-xl shadow-black/20">

@@ -3,6 +3,8 @@ import {
   useContext,
   useReducer,
   useEffect,
+  useRef,
+  useMemo,
   type ReactNode,
   type Dispatch,
 } from 'react'
@@ -47,21 +49,26 @@ interface AppProviderProps {
 export function AppProvider({ children, initialState }: AppProviderProps) {
   const [state, dispatch] = useReducer(appReducer, initialState ?? initialAppState)
 
-  // Expose state to window for debugging (development only)
+  // Use ref to access latest state without re-running effects
+  const stateRef = useRef(state)
+  stateRef.current = state
+
+  // Expose state to window for debugging (development only) - runs only once on mount
   useEffect(() => {
     if (import.meta.env.DEV) {
       window.__APP_DEBUG__ = {
-        getState: () => state,
+        getState: () => stateRef.current,
         getStateJSON: () => {
+          const currentState = stateRef.current
           // Create a serializable copy (Maps -> Objects)
           const serializable = {
-            ...state,
-            chordSuggestions: state.chordSuggestions
+            ...currentState,
+            chords: currentState.chords
               ? {
-                  diatonic: state.chordSuggestions.diatonic,
-                  secondary: state.chordSuggestions.secondary,
-                  borrowed: state.chordSuggestions.borrowed,
-                  ranked: state.chordSuggestions.ranked,
+                  diatonic: currentState.chords.diatonic,
+                  secondary: currentState.chords.secondary,
+                  borrowed: currentState.chords.borrowed,
+                  ranked: currentState.chords.ranked,
                 }
               : null,
           }
@@ -78,9 +85,12 @@ export function AppProvider({ children, initialState }: AppProviderProps) {
         'color: #10b981; font-weight: bold'
       )
     }
-  }, [state])
+  }, []) // Empty deps - only runs once on mount
 
-  return <AppContext.Provider value={{ state, dispatch }}>{children}</AppContext.Provider>
+  // Memoize context value to prevent unnecessary re-renders when only dispatch changes
+  const contextValue = useMemo(() => ({ state, dispatch }), [state])
+
+  return <AppContext.Provider value={contextValue}>{children}</AppContext.Provider>
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

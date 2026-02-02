@@ -1,3 +1,4 @@
+import { memo } from 'react'
 import { PlayIcon, StopIcon, ArrowRightIcon } from '../icons'
 import { ChordSlot } from './ChordSlot'
 import type { ProgressionSuggestion } from '../../domain/types'
@@ -11,7 +12,7 @@ interface ProgressionCardProps {
   onStop: () => void
 }
 
-export function ProgressionCard({
+export const ProgressionCard = memo(function ProgressionCard({
   progression,
   rank,
   isPlaying,
@@ -127,4 +128,4 @@ export function ProgressionCard({
       </div>
     </div>
   )
-}
+})
