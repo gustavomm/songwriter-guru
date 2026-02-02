@@ -17,11 +17,11 @@ describe('chordUtils', () => {
     })
 
     it('returns seventh chord intervals', () => {
-      expect(getIntervalsForQuality('7')).toEqual([0, 4, 7, 10])      // Dominant 7
-      expect(getIntervalsForQuality('maj7')).toEqual([0, 4, 7, 11])   // Major 7
-      expect(getIntervalsForQuality('M7')).toEqual([0, 4, 7, 11])     // Major 7
-      expect(getIntervalsForQuality('m7')).toEqual([0, 3, 7, 10])     // Minor 7
-      expect(getIntervalsForQuality('min7')).toEqual([0, 3, 7, 10])   // Minor 7
+      expect(getIntervalsForQuality('7')).toEqual([0, 4, 7, 10]) // Dominant 7
+      expect(getIntervalsForQuality('maj7')).toEqual([0, 4, 7, 11]) // Major 7
+      expect(getIntervalsForQuality('M7')).toEqual([0, 4, 7, 11]) // Major 7
+      expect(getIntervalsForQuality('m7')).toEqual([0, 3, 7, 10]) // Minor 7
+      expect(getIntervalsForQuality('min7')).toEqual([0, 3, 7, 10]) // Minor 7
     })
 
     it('returns diminished, augmented, and suspended intervals', () => {

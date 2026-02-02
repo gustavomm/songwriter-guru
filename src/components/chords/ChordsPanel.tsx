@@ -51,16 +51,12 @@ export function ChordsPanel() {
   return (
     <div className="rounded-2xl border border-stone-800 bg-gradient-to-b from-stone-900 to-stone-900/50 p-5 shadow-xl shadow-black/20">
       <div className="mb-4 flex items-center gap-2">
-        <div
-          className={`h-2 w-2 rounded-full ${hasResults ? 'bg-amber-500' : 'bg-stone-600'}`}
-        />
+        <div className={`h-2 w-2 rounded-full ${hasResults ? 'bg-amber-500' : 'bg-stone-600'}`} />
         <h2 className="text-sm font-semibold uppercase tracking-wider text-stone-400">
           Chord Suggestions
         </h2>
         {hasResults && (
-          <span className="ml-auto text-xs text-stone-500">
-            {chords.ranked.length} chords
-          </span>
+          <span className="ml-auto text-xs text-stone-500">{chords.ranked.length} chords</span>
         )}
       </div>
 
@@ -85,9 +81,7 @@ export function ChordsPanel() {
           </div>
 
           {visibleChords.length === 0 && (
-            <p className="py-8 text-center text-sm text-stone-500">
-              No chords in this category
-            </p>
+            <p className="py-8 text-center text-sm text-stone-500">No chords in this category</p>
           )}
         </>
       ) : (

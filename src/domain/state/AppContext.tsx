@@ -1,10 +1,4 @@
-import {
-  createContext,
-  useContext,
-  useReducer,
-  type ReactNode,
-  type Dispatch,
-} from 'react'
+import { createContext, useContext, useReducer, type ReactNode, type Dispatch } from 'react'
 import { appReducer, initialAppState, type AppState, type AppAction } from './AppState'
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -31,11 +25,7 @@ interface AppProviderProps {
 export function AppProvider({ children, initialState }: AppProviderProps) {
   const [state, dispatch] = useReducer(appReducer, initialState ?? initialAppState)
 
-  return (
-    <AppContext.Provider value={{ state, dispatch }}>
-      {children}
-    </AppContext.Provider>
-  )
+  return <AppContext.Provider value={{ state, dispatch }}>{children}</AppContext.Provider>
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

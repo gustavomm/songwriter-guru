@@ -60,7 +60,14 @@ export type AppAction =
         progressions: ProgressionSuggestion[]
       }
     }
-  | { type: 'SELECT_HARMONIC_FIELD'; payload: { candidateId: string; chords: ChordSuggestionResult; progressions: ProgressionSuggestion[] } }
+  | {
+      type: 'SELECT_HARMONIC_FIELD'
+      payload: {
+        candidateId: string
+        chords: ChordSuggestionResult
+        progressions: ProgressionSuggestion[]
+      }
+    }
   | { type: 'SET_ERROR'; payload: RecordingError }
   | { type: 'RESET' }
 

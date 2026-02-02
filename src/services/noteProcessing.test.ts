@@ -132,7 +132,7 @@ describe('noteProcessing', () => {
       const result = limitPolyphony(notes, 6)
       expect(result.length).toBe(6)
       // Should not include the lowest amplitude note
-      expect(result.some(n => n.midi === 71)).toBe(false)
+      expect(result.some((n) => n.midi === 71)).toBe(false)
     })
 
     it('allows notes that dont overlap', () => {
@@ -214,19 +214,16 @@ describe('noteProcessing', () => {
     })
 
     it('returns two notes unchanged', () => {
-      const notes = [
-        createNote(0, 0.5, 60),
-        createNote(0.5, 1, 61),
-      ]
+      const notes = [createNote(0, 0.5, 60), createNote(0.5, 1, 61)]
       const result = absorbWobbleNotes(notes)
       expect(result.length).toBe(2)
     })
 
     it('absorbs wobble pattern (A-B-A where B is ±1 semitone)', () => {
       const notes = [
-        createNote(0, 0.5, 60, 0.5),      // C
-        createNote(0.5, 0.6, 61, 0.5),    // C# (wobble - short, ±1 semitone)
-        createNote(0.6, 1, 60, 0.5),      // C
+        createNote(0, 0.5, 60, 0.5), // C
+        createNote(0.5, 0.6, 61, 0.5), // C# (wobble - short, ±1 semitone)
+        createNote(0.6, 1, 60, 0.5), // C
       ]
       const result = absorbWobbleNotes(notes)
       expect(result.length).toBe(1)
@@ -247,9 +244,9 @@ describe('noteProcessing', () => {
 
     it('does not absorb if pitch difference is too large', () => {
       const notes = [
-        createNote(0, 0.5, 60, 0.5),      // C
-        createNote(0.5, 0.6, 63, 0.5),    // D# (3 semitones - not wobble)
-        createNote(0.6, 1, 60, 0.5),      // C
+        createNote(0, 0.5, 60, 0.5), // C
+        createNote(0.5, 0.6, 63, 0.5), // D# (3 semitones - not wobble)
+        createNote(0.6, 1, 60, 0.5), // C
       ]
       const result = absorbWobbleNotes(notes, 1) // 1 semitone threshold
       expect(result.length).toBe(3)
@@ -257,9 +254,9 @@ describe('noteProcessing', () => {
 
     it('does not absorb if outer pitches differ', () => {
       const notes = [
-        createNote(0, 0.5, 60, 0.5),      // C
-        createNote(0.5, 0.6, 61, 0.5),    // C#
-        createNote(0.6, 1, 62, 0.5),      // D (different from first note)
+        createNote(0, 0.5, 60, 0.5), // C
+        createNote(0.5, 0.6, 61, 0.5), // C#
+        createNote(0.6, 1, 62, 0.5), // D (different from first note)
       ]
       const result = absorbWobbleNotes(notes)
       expect(result.length).toBe(3)
@@ -339,10 +336,7 @@ describe('noteProcessing', () => {
     })
 
     it('concatenates pitch bends when merging', () => {
-      const notes = [
-        createNote(0, 1, 60, 0.5, [0.1, 0.2]),
-        createNote(1, 2, 60, 0.5, [0.3]),
-      ]
+      const notes = [createNote(0, 1, 60, 0.5, [0.1, 0.2]), createNote(1, 2, 60, 0.5, [0.3])]
       const result = mergeConsecutiveSamePitch(notes)
       expect(result[0].pitchBend).toEqual([0.1, 0.2, 0.3])
     })
@@ -370,7 +364,7 @@ describe('noteProcessing', () => {
         createNote(2, 3, 64, 0.5), // New phrase
       ]
       const result = smartMergeNotes(notes)
-      
+
       // Should have 2 notes: merged first phrase + second phrase
       expect(result.length).toBe(2)
       expect(result[0].midi).toBe(60)

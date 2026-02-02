@@ -61,9 +61,7 @@ export function FieldCard({
           <span
             key={i}
             className={`rounded px-1.5 py-0.5 text-xs ${
-              i === 0
-                ? 'bg-violet-500/30 text-violet-300'
-                : 'bg-stone-700/50 text-stone-400'
+              i === 0 ? 'bg-violet-500/30 text-violet-300' : 'bg-stone-700/50 text-stone-400'
             }`}
           >
             {note}
@@ -74,8 +72,7 @@ export function FieldCard({
       {/* Out of scale notes */}
       {candidate.outOfScale.length > 0 && (
         <p className="mt-2 text-xs text-stone-500">
-          Out of scale:{' '}
-          {candidate.outOfScale.map((o) => o.note).join(', ')}
+          Out of scale: {candidate.outOfScale.map((o) => o.note).join(', ')}
         </p>
       )}
 

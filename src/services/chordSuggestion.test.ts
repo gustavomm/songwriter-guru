@@ -9,7 +9,7 @@ describe('chordSuggestion', () => {
       const pcWeights: PitchClassWeights = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
       for (const [pc, weight] of Object.entries(weights)) {
         const index = parseInt(pc) as 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11
-        pcWeights[index] = weight
+        pcWeights[index] = weight ?? 0
       }
       return pcWeights
     }
@@ -25,9 +25,9 @@ describe('chordSuggestion', () => {
       // Riff strongly emphasizes C (0), E (4), G (7) - C major triad notes
       const pcWeights = createPcWeights({ 0: 0.4, 4: 0.35, 7: 0.25 })
       const cMajorTones = ['C', 'E', 'G']
-      
+
       const scores = calculateScores(cMajorTones, pcWeights, 'diatonic')
-      
+
       // Support score should be sum of weights for chord tones = 0.4 + 0.35 + 0.25 = 1.0
       expect(scores.supportScore).toBeCloseTo(1.0, 2)
     })
@@ -36,9 +36,9 @@ describe('chordSuggestion', () => {
       // Riff has C, E, but also D and F which are not in C major triad
       const pcWeights = createPcWeights({ 0: 0.3, 2: 0.2, 4: 0.3, 5: 0.2 })
       const cMajorTones = ['C', 'E', 'G']
-      
+
       const scores = calculateScores(cMajorTones, pcWeights, 'diatonic')
-      
+
       // Support = 0.3 (C) + 0.3 (E) + 0 (G not in riff) = 0.6
       expect(scores.supportScore).toBeCloseTo(0.6, 2)
     })
@@ -47,9 +47,9 @@ describe('chordSuggestion', () => {
       // Riff has C and C# (semitone clash)
       const pcWeights = createPcWeights({ 0: 0.5, 1: 0.5 })
       const cMajorTones = ['C', 'E', 'G']
-      
+
       const scores = calculateScores(cMajorTones, pcWeights, 'diatonic')
-      
+
       // Support = 0.5 (C only)
       // Clash from C# (semitone above C) = 0.5
       // Color should be lower due to clash penalty
@@ -60,14 +60,14 @@ describe('chordSuggestion', () => {
       // Use lower weights so color score doesn't get capped at 1.0
       const pcWeights = createPcWeights({ 0: 0.3, 4: 0.3 })
       const chordTones = ['C', 'E', 'G']
-      
+
       const diatonicScores = calculateScores(chordTones, pcWeights, 'diatonic')
       const secondaryScores = calculateScores(chordTones, pcWeights, 'secondary_dominant')
       const borrowedScores = calculateScores(chordTones, pcWeights, 'borrowed')
-      
+
       // Support scores should be the same
       expect(secondaryScores.supportScore).toBeCloseTo(diatonicScores.supportScore, 2)
-      
+
       // Non-diatonic should have higher color score due to 0.1 bonus
       expect(secondaryScores.colorScore).toBeGreaterThan(diatonicScores.colorScore)
       expect(borrowedScores.colorScore).toBeGreaterThan(diatonicScores.colorScore)
@@ -77,9 +77,9 @@ describe('chordSuggestion', () => {
       // Bb = pitch class 10, same as A#
       const pcWeights = createPcWeights({ 10: 0.5, 5: 0.3, 0: 0.2 })
       const fMajorTones = ['F', 'A', 'C'] // F=5, A=9, C=0
-      
+
       const scores = calculateScores(fMajorTones, pcWeights, 'diatonic')
-      
+
       // Support = 0.3 (F) + 0 (A) + 0.2 (C) = 0.5
       expect(scores.supportScore).toBeCloseTo(0.5, 2)
     })
@@ -159,11 +159,11 @@ describe('chordSuggestion', () => {
 
     it('returns diatonic chords for the harmonic field', () => {
       const result = generateChordSuggestions(cMajorField, cMajorFeatures)
-      
+
       expect(result.diatonic.length).toBeGreaterThan(0)
-      
+
       // Should include common C major diatonic chords
-      const diatonicSymbols = result.diatonic.map(c => c.symbol)
+      const diatonicSymbols = result.diatonic.map((c) => c.symbol)
       expect(diatonicSymbols).toContain('C')
       expect(diatonicSymbols).toContain('Am')
       expect(diatonicSymbols).toContain('G')
@@ -171,44 +171,42 @@ describe('chordSuggestion', () => {
 
     it('includes secondary dominants', () => {
       const result = generateChordSuggestions(cMajorField, cMajorFeatures)
-      
+
       expect(result.secondary.length).toBeGreaterThan(0)
-      
+
       // Should include secondary dominants like V/ii (A7), V/vi (E7)
-      const hasSecondaryDominant = result.secondary.some(c => 
-        c.source === 'secondary_dominant' || c.source === 'substitute_dominant'
+      const hasSecondaryDominant = result.secondary.some(
+        (c) => c.source === 'secondary_dominant' || c.source === 'substitute_dominant'
       )
       expect(hasSecondaryDominant).toBe(true)
     })
 
     it('includes borrowed chords', () => {
       const result = generateChordSuggestions(cMajorField, cMajorFeatures)
-      
+
       expect(result.borrowed.length).toBeGreaterThan(0)
-      
+
       // All borrowed chords should have source = 'borrowed'
-      const allBorrowed = result.borrowed.every(c => c.source === 'borrowed')
+      const allBorrowed = result.borrowed.every((c) => c.source === 'borrowed')
       expect(allBorrowed).toBe(true)
     })
 
     it('provides ranked list sorted by color score', () => {
       const result = generateChordSuggestions(cMajorField, cMajorFeatures)
-      
+
       expect(result.ranked.length).toBeGreaterThan(0)
-      
+
       // Verify ranked is sorted by colorScore (descending)
       for (let i = 1; i < result.ranked.length; i++) {
-        expect(result.ranked[i - 1].colorScore).toBeGreaterThanOrEqual(
-          result.ranked[i].colorScore
-        )
+        expect(result.ranked[i - 1].colorScore).toBeGreaterThanOrEqual(result.ranked[i].colorScore)
       }
     })
 
     it('builds byId index for lookups', () => {
       const result = generateChordSuggestions(cMajorField, cMajorFeatures)
-      
+
       expect(result.byId.size).toBeGreaterThan(0)
-      
+
       // Should be able to look up C major chord
       const cMajor = result.byId.get('C')
       expect(cMajor).toBeDefined()
@@ -217,9 +215,9 @@ describe('chordSuggestion', () => {
 
     it('builds byRoman index for lookups', () => {
       const result = generateChordSuggestions(cMajorField, cMajorFeatures)
-      
+
       expect(result.byRoman.size).toBeGreaterThan(0)
-      
+
       // Should have I chord
       const tonicChords = result.byRoman.get('I')
       expect(tonicChords).toBeDefined()
@@ -228,7 +226,7 @@ describe('chordSuggestion', () => {
 
     it('builds byFunction index for lookups', () => {
       const result = generateChordSuggestions(cMajorField, cMajorFeatures)
-      
+
       // Should have tonic, subdominant, and dominant function chords
       expect(result.byFunction.get('T')).toBeDefined()
       expect(result.byFunction.get('SD')).toBeDefined()
@@ -253,11 +251,11 @@ describe('chordSuggestion', () => {
       }
 
       const result = generateChordSuggestions(aMinorField, aMinorFeatures)
-      
+
       expect(result.diatonic.length).toBeGreaterThan(0)
-      
+
       // Should include Am as tonic
-      const diatonicSymbols = result.diatonic.map(c => c.symbol)
+      const diatonicSymbols = result.diatonic.map((c) => c.symbol)
       expect(diatonicSymbols).toContain('Am')
     })
   })

@@ -52,9 +52,7 @@ export function ChordCard({ chord, isPlaying, onPlay }: ChordCardProps) {
           </button>
           <div className="min-w-0">
             <span className="text-lg font-bold text-stone-100">{chord.symbol}</span>
-            {chord.roman && (
-              <span className="ml-2 text-sm text-stone-500">{chord.roman}</span>
-            )}
+            {chord.roman && <span className="ml-2 text-sm text-stone-500">{chord.roman}</span>}
           </div>
         </div>
         {/* Source labels - show all if chord has multiple sources */}
@@ -72,10 +70,7 @@ export function ChordCard({ chord, isPlaying, onPlay }: ChordCardProps) {
 
       <div className="mb-2 flex flex-wrap gap-1">
         {chord.chordTones.map((tone, i) => (
-          <span
-            key={i}
-            className="rounded bg-stone-700/50 px-1.5 py-0.5 text-xs text-stone-400"
-          >
+          <span key={i} className="rounded bg-stone-700/50 px-1.5 py-0.5 text-xs text-stone-400">
             {tone}
           </span>
         ))}
@@ -95,7 +90,9 @@ export function ChordCard({ chord, isPlaying, onPlay }: ChordCardProps) {
               style={{ width: `${chord.supportScore * 100}%` }}
             />
           </div>
-          <span className="text-emerald-400/80 font-medium">{Math.round(chord.supportScore * 100)}%</span>
+          <span className="text-emerald-400/80 font-medium">
+            {Math.round(chord.supportScore * 100)}%
+          </span>
           <span className="text-stone-500">fit</span>
         </div>
         <div className="flex items-center gap-1.5">
@@ -105,7 +102,9 @@ export function ChordCard({ chord, isPlaying, onPlay }: ChordCardProps) {
               style={{ width: `${chord.colorScore * 100}%` }}
             />
           </div>
-          <span className="text-violet-400/80 font-medium">{Math.round(chord.colorScore * 100)}%</span>
+          <span className="text-violet-400/80 font-medium">
+            {Math.round(chord.colorScore * 100)}%
+          </span>
           <span className="text-stone-500">color</span>
         </div>
       </div>

@@ -191,7 +191,7 @@ export function useAudioRecorder(options: UseAudioRecorderOptions = {}): UseAudi
       // Handle recording stop
       mediaRecorder.onstop = async () => {
         const blob = new Blob(chunksRef.current, {
-          type: mimeType || 'audio/webm'
+          type: mimeType || 'audio/webm',
         })
         const audioUrl = URL.createObjectURL(blob)
         const durationMs = Date.now() - startTimeRef.current
@@ -259,7 +259,10 @@ export function useAudioRecorder(options: UseAudioRecorderOptions = {}): UseAudi
 
         // Auto-stop at max duration
         if (elapsed >= MAX_RECORDING_MS) {
-          stopRecording()
+          // Inline stop logic to avoid hoisting issues
+          if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
+            mediaRecorderRef.current.stop()
+          }
         }
       }, TIMER_INTERVAL_MS)
     } catch (err) {

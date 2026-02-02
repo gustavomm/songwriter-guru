@@ -26,20 +26,28 @@ export function ProgressionsPanel() {
   const hasResults = status === 'analyzed' && progressions && progressions.length > 0
 
   // Get selected harmonic field candidate
-  const selectedCandidate = harmony?.candidates.find(c => c.id === harmony.selectedCandidateId)
+  const selectedCandidate = harmony?.candidates.find((c) => c.id === harmony.selectedCandidateId)
 
   // Regenerate progressions when knob is released
-  const handleWeirdnessComplete = useCallback((newWeirdness: number) => {
-    if (!selectedCandidate || !chords || !features) return
+  const handleWeirdnessComplete = useCallback(
+    (newWeirdness: number) => {
+      if (!selectedCandidate || !chords || !features) return
 
-    setIsRegenerating(true)
-    // Use setTimeout to allow UI to update before heavy computation
-    setTimeout(() => {
-      const newProgressions = generateProgressions(selectedCandidate, chords, features, newWeirdness)
-      setLocalProgressions(newProgressions)
-      setIsRegenerating(false)
-    }, 10)
-  }, [selectedCandidate, chords, features])
+      setIsRegenerating(true)
+      // Use setTimeout to allow UI to update before heavy computation
+      setTimeout(() => {
+        const newProgressions = generateProgressions(
+          selectedCandidate,
+          chords,
+          features,
+          newWeirdness
+        )
+        setLocalProgressions(newProgressions)
+        setIsRegenerating(false)
+      }, 10)
+    },
+    [selectedCandidate, chords, features]
+  )
 
   // Reset local progressions when state progressions change (new analysis)
   useEffect(() => {
@@ -48,46 +56,49 @@ export function ProgressionsPanel() {
   }, [stateProgressions])
 
   // Play a progression as a sequence of chords
-  const handlePlay = useCallback((index: number) => {
-    if (!progressions) return
+  const handlePlay = useCallback(
+    (index: number) => {
+      if (!progressions) return
 
-    const progression = progressions[index]
-    if (!progression) return
+      const progression = progressions[index]
+      if (!progression) return
 
-    // Clear any existing playback
-    playbackRef.current.timeoutIds.forEach(id => clearTimeout(id))
-    playbackRef.current.timeoutIds = []
+      // Clear any existing playback
+      playbackRef.current.timeoutIds.forEach((id) => clearTimeout(id))
+      playbackRef.current.timeoutIds = []
 
-    setPlayingIndex(index)
-    setCurrentChordIndex(0)
-
-    const chordDuration = 800 // ms per chord
-    const gap = 100 // ms between chords
-
-    progression.chords.forEach((chord, i) => {
-      const delay = i * (chordDuration + gap)
-
-      const timeoutId = window.setTimeout(() => {
-        setCurrentChordIndex(i)
-        // Parse chord and play (extract root and type)
-        midiPlayer.playChord(getChordTones(chord), 3, chordDuration, 0.35)
-      }, delay)
-
-      playbackRef.current.timeoutIds.push(timeoutId)
-    })
-
-    // Stop playing state after all chords
-    const totalDuration = progression.chords.length * (chordDuration + gap)
-    const endTimeout = window.setTimeout(() => {
-      setPlayingIndex(null)
+      setPlayingIndex(index)
       setCurrentChordIndex(0)
-    }, totalDuration)
-    playbackRef.current.timeoutIds.push(endTimeout)
-  }, [progressions])
+
+      const chordDuration = 800 // ms per chord
+      const gap = 100 // ms between chords
+
+      progression.chords.forEach((chord, i) => {
+        const delay = i * (chordDuration + gap)
+
+        const timeoutId = window.setTimeout(() => {
+          setCurrentChordIndex(i)
+          // Parse chord and play (extract root and type)
+          midiPlayer.playChord(getChordTones(chord), 3, chordDuration, 0.35)
+        }, delay)
+
+        playbackRef.current.timeoutIds.push(timeoutId)
+      })
+
+      // Stop playing state after all chords
+      const totalDuration = progression.chords.length * (chordDuration + gap)
+      const endTimeout = window.setTimeout(() => {
+        setPlayingIndex(null)
+        setCurrentChordIndex(0)
+      }, totalDuration)
+      playbackRef.current.timeoutIds.push(endTimeout)
+    },
+    [progressions]
+  )
 
   // Stop playback
   const handleStop = useCallback(() => {
-    playbackRef.current.timeoutIds.forEach(id => clearTimeout(id))
+    playbackRef.current.timeoutIds.forEach((id) => clearTimeout(id))
     playbackRef.current.timeoutIds = []
     setPlayingIndex(null)
     setCurrentChordIndex(0)
@@ -104,9 +115,7 @@ export function ProgressionsPanel() {
             Progression Ideas
           </h2>
           {hasResults && (
-            <span className="text-xs text-stone-500">
-              {progressions.length} suggestions
-            </span>
+            <span className="text-xs text-stone-500">{progressions.length} suggestions</span>
           )}
         </div>
 
@@ -126,7 +135,9 @@ export function ProgressionsPanel() {
           <div className="h-6 w-6 animate-spin rounded-full border-2 border-stone-600 border-t-emerald-500" />
         </div>
       ) : hasResults ? (
-        <div className={`space-y-3 transition-opacity duration-200 ${isRegenerating ? 'opacity-50' : ''}`}>
+        <div
+          className={`space-y-3 transition-opacity duration-200 ${isRegenerating ? 'opacity-50' : ''}`}
+        >
           {progressions.map((progression, i) => (
             <ProgressionCard
               key={i}

@@ -1,3 +1,4 @@
+import { useMemo } from 'react'
 import { MicrophoneIcon } from '../icons'
 import type { TranscriptionResult } from '../../domain/types'
 
@@ -23,10 +24,7 @@ export function WaveformDisplay({
       {isRecording ? (
         <RecordingAnimation />
       ) : isTranscribing ? (
-        <TranscribingProgress
-          progress={transcriptionProgress}
-          message={transcriptionMessage}
-        />
+        <TranscribingProgress progress={transcriptionProgress} message={transcriptionMessage} />
       ) : hasAnalysis && transcription ? (
         <AnalysisComplete />
       ) : (
@@ -37,14 +35,17 @@ export function WaveformDisplay({
 }
 
 function RecordingAnimation() {
+  // Generate stable random heights once on mount
+  const heights = useMemo(() => Array.from({ length: 12 }, () => 20 + Math.random() * 60), [])
+
   return (
     <div className="flex items-end gap-0.5 sm:gap-1">
-      {Array.from({ length: 12 }).map((_, i) => (
+      {heights.map((height, i) => (
         <div
           key={i}
           className="w-1.5 rounded-t bg-gradient-to-t from-red-600 to-red-400 sm:w-2"
           style={{
-            height: `${20 + Math.random() * 60}%`,
+            height: `${height}%`,
             animation: `pulse 0.5s ease-in-out ${i * 0.05}s infinite alternate`,
           }}
         />
@@ -53,13 +54,7 @@ function RecordingAnimation() {
   )
 }
 
-function TranscribingProgress({
-  progress,
-  message,
-}: {
-  progress: number
-  message: string | null
-}) {
+function TranscribingProgress({ progress, message }: { progress: number; message: string | null }) {
   return (
     <div className="flex w-full flex-col items-center gap-2 px-4 sm:gap-3 sm:px-8">
       <div className="h-5 w-5 animate-spin rounded-full border-2 border-stone-600 border-t-amber-500 sm:h-6 sm:w-6" />
@@ -80,18 +75,18 @@ function TranscribingProgress({
 }
 
 function AnalysisComplete() {
+  // Generate stable random heights once on mount
+  const heights = useMemo(() => Array.from({ length: 20 }, () => Math.random() * 60 + 20), [])
+
   return (
     <div className="flex w-full items-end justify-center gap-0.5 px-3 sm:gap-1 sm:px-4">
-      {Array.from({ length: 20 }).map((_, i) => {
-        const height = Math.random() * 60 + 20
-        return (
-          <div
-            key={i}
-            className="w-1.5 rounded-t bg-gradient-to-t from-emerald-600 to-emerald-400 sm:w-2"
-            style={{ height: `${height}%` }}
-          />
-        )
-      })}
+      {heights.map((height, i) => (
+        <div
+          key={i}
+          className="w-1.5 rounded-t bg-gradient-to-t from-emerald-600 to-emerald-400 sm:w-2"
+          style={{ height: `${height}%` }}
+        />
+      ))}
     </div>
   )
 }

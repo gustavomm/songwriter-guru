@@ -42,11 +42,7 @@ export function ProgressionCard({
             }`}
             title={isPlaying ? 'Stop' : 'Play progression'}
           >
-            {isPlaying ? (
-              <StopIcon className="h-3 w-3" />
-            ) : (
-              <PlayIcon className="h-3 w-3" />
-            )}
+            {isPlaying ? <StopIcon className="h-3 w-3" /> : <PlayIcon className="h-3 w-3" />}
           </button>
           <span className="flex h-6 w-6 items-center justify-center rounded-full bg-stone-800 text-xs font-medium text-stone-400">
             {rank}
@@ -70,57 +66,50 @@ export function ProgressionCard({
 
       {/* Chord flow */}
       <div className="flex flex-wrap items-center gap-2">
-        {hasSlots ? (
-          // Use slots with alternatives
-          progression.slots.map((slot, i) => (
-            <div key={i} className="flex items-center gap-2">
-              <ChordSlot
-                slot={slot}
-                isActive={isPlaying && currentChordIndex === i}
-              />
-              {i < progression.slots.length - 1 && (
-                <ArrowRightIcon className="h-4 w-4 text-stone-600" />
-              )}
-            </div>
-          ))
-        ) : (
-          // Fallback to legacy chords/romans arrays
-          progression.chords.map((chord, i) => (
-            <div key={i} className="flex items-center gap-2">
-              <div
-                className={`flex flex-col items-center rounded-lg px-2 py-1 transition-all ${
-                  isPlaying && currentChordIndex === i
-                    ? 'bg-amber-500/20 ring-1 ring-amber-500/50'
-                    : ''
-                }`}
-              >
-                <span
-                  className={`text-lg font-bold ${
-                    isPlaying && currentChordIndex === i
-                      ? 'text-amber-400'
-                      : 'text-stone-100'
-                  }`}
-                >
-                  {chord}
-                </span>
-                {progression.romans[i] && (
-                  <span
-                    className={`text-xs ${
-                      isPlaying && currentChordIndex === i
-                        ? 'text-amber-500/70'
-                        : 'text-stone-500'
-                    }`}
-                  >
-                    {progression.romans[i]}
-                  </span>
+        {hasSlots
+          ? // Use slots with alternatives
+            progression.slots.map((slot, i) => (
+              <div key={i} className="flex items-center gap-2">
+                <ChordSlot slot={slot} isActive={isPlaying && currentChordIndex === i} />
+                {i < progression.slots.length - 1 && (
+                  <ArrowRightIcon className="h-4 w-4 text-stone-600" />
                 )}
               </div>
-              {i < progression.chords.length - 1 && (
-                <ArrowRightIcon className="h-4 w-4 text-stone-600" />
-              )}
-            </div>
-          ))
-        )}
+            ))
+          : // Fallback to legacy chords/romans arrays
+            progression.chords.map((chord, i) => (
+              <div key={i} className="flex items-center gap-2">
+                <div
+                  className={`flex flex-col items-center rounded-lg px-2 py-1 transition-all ${
+                    isPlaying && currentChordIndex === i
+                      ? 'bg-amber-500/20 ring-1 ring-amber-500/50'
+                      : ''
+                  }`}
+                >
+                  <span
+                    className={`text-lg font-bold ${
+                      isPlaying && currentChordIndex === i ? 'text-amber-400' : 'text-stone-100'
+                    }`}
+                  >
+                    {chord}
+                  </span>
+                  {progression.romans[i] && (
+                    <span
+                      className={`text-xs ${
+                        isPlaying && currentChordIndex === i
+                          ? 'text-amber-500/70'
+                          : 'text-stone-500'
+                      }`}
+                    >
+                      {progression.romans[i]}
+                    </span>
+                  )}
+                </div>
+                {i < progression.chords.length - 1 && (
+                  <ArrowRightIcon className="h-4 w-4 text-stone-600" />
+                )}
+              </div>
+            ))}
       </div>
     </div>
   )

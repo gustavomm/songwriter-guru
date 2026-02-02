@@ -1,6 +1,6 @@
 /**
  * PCM Capture Service
- * 
+ *
  * Captures raw PCM float samples using AudioWorklet for lossless audio capture.
  * This bypasses MediaRecorder's lossy compression (Opus) for improved transcription accuracy.
  */
@@ -31,7 +31,9 @@ export interface PCMCaptureResult {
 export function isPCMCaptureSupported(): boolean {
   try {
     // Check for AudioContext
-    const AudioContextClass = window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
+    const AudioContextClass =
+      window.AudioContext ||
+      (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
     if (!AudioContextClass) {
       return false
     }
@@ -64,7 +66,7 @@ export class PCMCapture {
 
   /**
    * Start capturing PCM samples from the given MediaStream.
-   * 
+   *
    * @param stream - MediaStream from getUserMedia
    * @returns Promise that resolves when capture is ready
    */
@@ -74,7 +76,9 @@ export class PCMCapture {
     }
 
     // Create AudioContext
-    const AudioContextClass = window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
+    const AudioContextClass =
+      window.AudioContext ||
+      (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
     this.audioContext = new AudioContextClass()
 
     try {
@@ -111,7 +115,7 @@ export class PCMCapture {
 
   /**
    * Stop capturing and return the accumulated PCM data.
-   * 
+   *
    * @returns PCMCaptureResult with the raw audio data
    */
   async stopCapture(): Promise<PCMCaptureResult | null> {
@@ -126,7 +130,7 @@ export class PCMCapture {
     // Concatenate all sample chunks into a single Float32Array
     const totalLength = this.sampleChunks.reduce((acc, chunk) => acc + chunk.length, 0)
     const pcmData = new Float32Array(totalLength)
-    
+
     let offset = 0
     for (const chunk of this.sampleChunks) {
       pcmData.set(chunk, offset)

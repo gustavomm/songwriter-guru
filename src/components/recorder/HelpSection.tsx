@@ -20,11 +20,15 @@ export function HelpSection() {
       {isHelpOpen && (
         <div className="mt-2 space-y-1.5 text-[11px] text-stone-500 sm:mt-3 sm:space-y-2 sm:text-xs">
           <HelpTip
-            icon={<LightbulbIcon className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-500 sm:h-4 sm:w-4" />}
+            icon={
+              <LightbulbIcon className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-500 sm:h-4 sm:w-4" />
+            }
             text="Record one instrument at a time for best pitch detection."
           />
           <HelpTip
-            icon={<ShieldIcon className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-500 sm:h-4 sm:w-4" />}
+            icon={
+              <ShieldIcon className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-500 sm:h-4 sm:w-4" />
+            }
             text="Everything runs locally — your audio never leaves your device."
           />
           <HelpTip

@@ -35,9 +35,7 @@ export function RecorderHeader({
                   : 'bg-stone-600'
         }`}
       />
-      <h2 className="text-sm font-semibold uppercase tracking-wider text-stone-400">
-        Recorder
-      </h2>
+      <h2 className="text-sm font-semibold uppercase tracking-wider text-stone-400">Recorder</h2>
       {hasAnalysis && transcription && (
         <span className="ml-auto text-xs text-stone-500 tabular-nums">
           {transcription.noteCount} notes detected

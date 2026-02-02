@@ -1,7 +1,10 @@
 import { useState, useCallback } from 'react'
 import { useAppState, useAppDispatch } from '../../domain/state'
 import { useAudioRecorder } from '../../services/audioRecorder'
-import { transcriptionService, TranscriptionCancelledError } from '../../services/transcriptionService'
+import {
+  transcriptionService,
+  TranscriptionCancelledError,
+} from '../../services/transcriptionService'
 import { extractFeatures } from '../../services/featureExtraction'
 import { analyzeHarmony } from '../../services/harmonyAnalysis'
 import { generateChordSuggestions } from '../../services/chordSuggestion'
@@ -145,9 +148,8 @@ export function RecorderCard() {
         type: 'SET_TRANSCRIPTION_PROGRESS',
         payload: { percent: 97, message: 'Generating progressions...' },
       })
-      const progressions = selectedCandidate && chords
-        ? generateProgressions(selectedCandidate, chords, features)
-        : []
+      const progressions =
+        selectedCandidate && chords ? generateProgressions(selectedCandidate, chords, features) : []
 
       // Complete - dispatch full analysis result
       dispatch({
@@ -174,9 +176,7 @@ export function RecorderCard() {
         payload: {
           stage: 'transcribe',
           message:
-            err instanceof Error
-              ? err.message
-              : 'Failed to transcribe audio. Please try again.',
+            err instanceof Error ? err.message : 'Failed to transcribe audio. Please try again.',
         },
       })
     }
@@ -243,7 +243,7 @@ export function RecorderCard() {
           musicMode={musicMode}
           onMusicModeChange={() => setMusicMode(!musicMode)}
           preset={preset}
-          onPresetChange={() => setPreset(p => p === 'lead' ? 'chord' : 'lead')}
+          onPresetChange={() => setPreset((p) => (p === 'lead' ? 'chord' : 'lead'))}
         />
       )}
 

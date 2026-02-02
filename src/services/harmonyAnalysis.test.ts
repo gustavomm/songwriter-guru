@@ -8,7 +8,7 @@ describe('harmonyAnalysis', () => {
     const pcWeights: PitchClassWeights = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
     for (const [pc, weight] of Object.entries(weights)) {
       const index = parseInt(pc) as 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11
-      pcWeights[index] = weight
+      pcWeights[index] = weight ?? 0
     }
     return pcWeights
   }
@@ -43,7 +43,7 @@ describe('harmonyAnalysis', () => {
       const result = analyzeHarmony(aMinorFeatures)
 
       // A Minor should be in top candidates
-      const aMinor = result.candidates.find(c => c.tonic === 'A' && c.mode === 'Minor')
+      const aMinor = result.candidates.find((c) => c.tonic === 'A' && c.mode === 'Minor')
       expect(aMinor).toBeDefined()
       expect(aMinor!.fitScore).toBeGreaterThan(0.8)
     })
@@ -95,8 +95,8 @@ describe('harmonyAnalysis', () => {
       const resultOther = analyzeHarmony(endsOnOther)
 
       // Find C Major in both results
-      const cMajorTonic = resultTonic.candidates.find(c => c.id === 'C-major')
-      const cMajorOther = resultOther.candidates.find(c => c.id === 'C-major')
+      const cMajorTonic = resultTonic.candidates.find((c) => c.id === 'C-major')
+      const cMajorOther = resultOther.candidates.find((c) => c.id === 'C-major')
 
       expect(cMajorTonic).toBeDefined()
       expect(cMajorOther).toBeDefined()
@@ -121,8 +121,8 @@ describe('harmonyAnalysis', () => {
       const resultTonic = analyzeHarmony(bassIsTonic)
       const resultOther = analyzeHarmony(bassIsOther)
 
-      const cMajorTonic = resultTonic.candidates.find(c => c.id === 'C-major')
-      const cMajorOther = resultOther.candidates.find(c => c.id === 'C-major')
+      const cMajorTonic = resultTonic.candidates.find((c) => c.id === 'C-major')
+      const cMajorOther = resultOther.candidates.find((c) => c.id === 'C-major')
 
       expect(cMajorTonic).toBeDefined()
       expect(cMajorOther).toBeDefined()
@@ -140,10 +140,10 @@ describe('harmonyAnalysis', () => {
       const result = analyzeHarmony(features)
 
       // C Major should report F# as out of scale
-      const cMajor = result.candidates.find(c => c.id === 'C-major')
+      const cMajor = result.candidates.find((c) => c.id === 'C-major')
       expect(cMajor).toBeDefined()
       expect(cMajor!.outOfScale.length).toBeGreaterThan(0)
-      expect(cMajor!.outOfScale.some(n => n.note === 'F#')).toBe(true)
+      expect(cMajor!.outOfScale.some((n) => n.note === 'F#')).toBe(true)
     })
 
     it('penalizes candidates with many out-of-scale notes', () => {
@@ -159,8 +159,10 @@ describe('harmonyAnalysis', () => {
         topPitchClasses: [0, 1, 4, 6, 7],
       }
 
-      const pureCMajor = analyzeHarmony(cMajorPure).candidates.find(c => c.id === 'C-major')
-      const chromaticCMajor = analyzeHarmony(withChromatic).candidates.find(c => c.id === 'C-major')
+      const pureCMajor = analyzeHarmony(cMajorPure).candidates.find((c) => c.id === 'C-major')
+      const chromaticCMajor = analyzeHarmony(withChromatic).candidates.find(
+        (c) => c.id === 'C-major'
+      )
 
       expect(pureCMajor).toBeDefined()
       expect(chromaticCMajor).toBeDefined()
@@ -226,14 +228,14 @@ describe('harmonyAnalysis', () => {
       // C major: C=0, D=2, E=4, F=5, G=7, A=9, B=11
       const cMajorPcs = getScalePitchClasses('C', 'Major')
       expect(cMajorPcs.sort((a, b) => a - b)).toEqual([0, 2, 4, 5, 7, 9, 11])
-      
+
       // A minor: A=9, B=11, C=0, D=2, E=4, F=5, G=7
       const aMinorPcs = getScalePitchClasses('A', 'Minor')
       expect(aMinorPcs.sort((a, b) => a - b)).toEqual([0, 2, 4, 5, 7, 9, 11])
-      
+
       // G major has F# (pitch class 6)
       expect(getScalePitchClasses('G', 'Major')).toContain(6)
-      
+
       // F major has Bb (pitch class 10)
       expect(getScalePitchClasses('F', 'Major')).toContain(10)
     })

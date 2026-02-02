@@ -24,12 +24,7 @@ export interface RecordingAsset {
   pcmSampleRate?: number
 }
 
-export type RecordingErrorStage =
-  | 'permission'
-  | 'record'
-  | 'decode'
-  | 'transcribe'
-  | 'analyze'
+export type RecordingErrorStage = 'permission' | 'record' | 'decode' | 'transcribe' | 'analyze'
 
 export interface RecordingError {
   stage: RecordingErrorStage

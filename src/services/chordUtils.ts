@@ -18,7 +18,7 @@ export function getChordTones(chordSymbol: string): string[] {
   const intervals = getIntervalsForQuality(quality)
 
   // Convert intervals to note names (simplified - just returns chord tones)
-  return intervals.map(semitones => transposeNote(root, semitones))
+  return intervals.map((semitones) => transposeNote(root, semitones))
 }
 
 /**
@@ -76,7 +76,13 @@ export function getIntervalsForQuality(quality: string): number[] {
 export function transposeNote(note: string, semitones: number): string {
   const notes = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
   const flatToSharp: Record<string, string> = {
-    'Db': 'C#', 'Eb': 'D#', 'Fb': 'E', 'Gb': 'F#', 'Ab': 'G#', 'Bb': 'A#', 'Cb': 'B'
+    Db: 'C#',
+    Eb: 'D#',
+    Fb: 'E',
+    Gb: 'F#',
+    Ab: 'G#',
+    Bb: 'A#',
+    Cb: 'B',
   }
 
   // Normalize flats to sharps for lookup

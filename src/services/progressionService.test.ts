@@ -8,7 +8,6 @@ import {
   scoreSubstituteResolution,
   calculateFunctionBonus,
   type ProgressionScoreComponents,
-  type HarmonicFunction,
 } from './progressionService'
 import { generateChordSuggestions } from './chordSuggestion'
 import type { HarmonicFieldCandidate, RiffFeatures, PitchClassWeights } from '../domain/types'
@@ -19,7 +18,7 @@ describe('progressionService', () => {
     const pcWeights: PitchClassWeights = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
     for (const [pc, weight] of Object.entries(weights)) {
       const index = parseInt(pc) as 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11
-      pcWeights[index] = weight
+      pcWeights[index] = weight ?? 0
     }
     return pcWeights
   }
@@ -92,7 +91,7 @@ describe('progressionService', () => {
         expect(prog.chords.length).toBe(prog.romans.length)
         expect(prog.chords.length).toBe(prog.slots.length)
         expect(prog.chords.length).toBeGreaterThanOrEqual(3)
-        
+
         // Score should be between 0 and 1
         expect(prog.score).toBeGreaterThanOrEqual(0)
         expect(prog.score).toBeLessThanOrEqual(1)
@@ -110,7 +109,7 @@ describe('progressionService', () => {
 
       // At low weirdness, should have some pure diatonic progressions
       const hasDiatonic = progressions.some(
-        prog => !prog.containsSecondaryDominant && !prog.containsBorrowedChord
+        (prog) => !prog.containsSecondaryDominant && !prog.containsBorrowedChord
       )
       expect(hasDiatonic).toBe(true)
     })
@@ -120,7 +119,7 @@ describe('progressionService', () => {
       const progressions = generateProgressions(cMajorField, chords, cMajorFeatures, 0.8)
 
       // At higher weirdness, should have some progressions with secondary dominants
-      const hasSecondary = progressions.some(prog => prog.containsSecondaryDominant)
+      const hasSecondary = progressions.some((prog) => prog.containsSecondaryDominant)
       expect(hasSecondary).toBe(true)
     })
 
@@ -129,8 +128,8 @@ describe('progressionService', () => {
       const progressions = generateProgressions(cMajorField, chords, cMajorFeatures)
 
       // At least some slots should have alternatives
-      const hasAlternatives = progressions.some(prog =>
-        prog.slots.some(slot => slot.alternatives.length > 0)
+      const hasAlternatives = progressions.some((prog) =>
+        prog.slots.some((slot) => slot.alternatives.length > 0)
       )
       expect(hasAlternatives).toBe(true)
     })
@@ -142,13 +141,13 @@ describe('progressionService', () => {
       for (const prog of progressions) {
         for (let i = 0; i < prog.slots.length; i++) {
           const slot = prog.slots[i]
-          
+
           // Slot should have a role
           expect(slot.role).toBeTruthy()
-          
+
           // Chosen chord should match the chord at this position
           expect(slot.chosen.symbol).toBe(prog.chords[i])
-          
+
           // Chosen chord should have required fields
           expect(slot.chosen.id).toBeTruthy()
           expect(slot.chosen.chordTones).toBeDefined()
@@ -162,28 +161,28 @@ describe('progressionService', () => {
       const progressions = generateProgressions(cMajorField, chords, cMajorFeatures)
 
       // Check that we have progressions starting with tonic (I)
-      const startsWithTonic = progressions.some(p => p.romans[0] === 'I')
+      const startsWithTonic = progressions.some((p) => p.romans[0] === 'I')
       expect(startsWithTonic).toBe(true)
 
       // Check that we have progressions containing dominant (V)
-      const containsDominant = progressions.some(p => p.romans.includes('V'))
+      const containsDominant = progressions.some((p) => p.romans.includes('V'))
       expect(containsDominant).toBe(true)
 
       // Check that we have progressions containing subdominant (IV)
-      const containsSubdominant = progressions.some(p => p.romans.includes('IV'))
+      const containsSubdominant = progressions.some((p) => p.romans.includes('IV'))
       expect(containsSubdominant).toBe(true)
     })
 
     it('respects weirdness parameter', () => {
       const chords = generateChordSuggestions(cMajorField, cMajorFeatures)
-      
+
       const lowWeirdness = generateProgressions(cMajorField, chords, cMajorFeatures, 0)
       const highWeirdness = generateProgressions(cMajorField, chords, cMajorFeatures, 1)
 
       // At high weirdness, color chords should score better
       // So the top progressions should contain more color
-      const lowColorCount = lowWeirdness.slice(0, 5).filter(p => p.containsColorChord).length
-      const highColorCount = highWeirdness.slice(0, 5).filter(p => p.containsColorChord).length
+      const lowColorCount = lowWeirdness.slice(0, 5).filter((p) => p.containsColorChord).length
+      const highColorCount = highWeirdness.slice(0, 5).filter((p) => p.containsColorChord).length
 
       expect(highColorCount).toBeGreaterThanOrEqual(lowColorCount)
     })
@@ -201,12 +200,12 @@ describe('progressionService', () => {
       const progressions = generateProgressions(cMajorField, chords, cMajorFeatures, 1)
 
       // Find progressions marked as containing borrowed chords
-      const withBorrowed = progressions.filter(p => p.containsBorrowedChord)
+      const withBorrowed = progressions.filter((p) => p.containsBorrowedChord)
 
       // If we have borrowed progressions, they should have borrowed roman numerals
       for (const prog of withBorrowed) {
         const hasBorrowedRoman = prog.romans.some(
-          r => r.startsWith('b') || (r === 'iv' && cMajorField.mode === 'Major')
+          (r) => r.startsWith('b') || (r === 'iv' && cMajorField.mode === 'Major')
         )
         expect(hasBorrowedRoman).toBe(true)
       }
@@ -217,13 +216,11 @@ describe('progressionService', () => {
       const progressions = generateProgressions(cMajorField, chords, cMajorFeatures, 0.8)
 
       // Find progressions marked as containing secondary dominants
-      const withSecondary = progressions.filter(p => p.containsSecondaryDominant)
+      const withSecondary = progressions.filter((p) => p.containsSecondaryDominant)
 
       // If we have secondary dominant progressions, they should have V/x or subV patterns
       for (const prog of withSecondary) {
-        const hasSecondaryRoman = prog.romans.some(
-          r => r.includes('/') || r.startsWith('subV')
-        )
+        const hasSecondaryRoman = prog.romans.some((r) => r.includes('/') || r.startsWith('subV'))
         expect(hasSecondaryRoman).toBe(true)
       }
     })
@@ -233,7 +230,7 @@ describe('progressionService', () => {
       const progressions = generateProgressions(cMajorField, chords, cMajorFeatures)
 
       // Check for unique chord sequences
-      const sequences = progressions.map(p => p.chords.join('-'))
+      const sequences = progressions.map((p) => p.chords.join('-'))
       const uniqueSequences = new Set(sequences)
 
       expect(uniqueSequences.size).toBe(sequences.length)
@@ -241,7 +238,7 @@ describe('progressionService', () => {
 
     it('works without features parameter (backwards compatibility)', () => {
       const chords = generateChordSuggestions(cMajorField, cMajorFeatures)
-      
+
       // Should not throw when features is undefined
       expect(() => {
         generateProgressions(cMajorField, chords)
@@ -388,12 +385,12 @@ describe('progressionService', () => {
 
     it('gives penalty for wrong resolution (V/vi → IV)', () => {
       const score = scoreAppliedChordResolution('V/vi', 'IV')
-      expect(score).toBe(-0.30)
+      expect(score).toBe(-0.3)
     })
 
     it('gives penalty for no resolution (null next)', () => {
       const score = scoreAppliedChordResolution('V/vi', null)
-      expect(score).toBe(-0.30)
+      expect(score).toBe(-0.3)
     })
 
     it('returns 0 for non-applied chords', () => {
@@ -406,7 +403,7 @@ describe('progressionService', () => {
       const wrong = scoreAppliedChordResolution('vii°/V', 'I')
 
       expect(correct).toBe(0.25)
-      expect(wrong).toBe(-0.30)
+      expect(wrong).toBe(-0.3)
     })
   })
 
@@ -440,17 +437,17 @@ describe('progressionService', () => {
   describe('scoreSubstituteResolution', () => {
     it('gives bonus for subV → I resolution', () => {
       const score = scoreSubstituteResolution('subV', 'I')
-      expect(score).toBe(0.20)
+      expect(score).toBe(0.2)
     })
 
     it('gives bonus for subV7 → I resolution', () => {
       const score = scoreSubstituteResolution('subV7', 'I')
-      expect(score).toBe(0.20)
+      expect(score).toBe(0.2)
     })
 
     it('gives bonus for subV/ii → ii resolution', () => {
       const score = scoreSubstituteResolution('subV/ii', 'ii')
-      expect(score).toBe(0.20)
+      expect(score).toBe(0.2)
     })
 
     it('gives penalty for wrong resolution (subV → IV)', () => {
@@ -486,8 +483,8 @@ describe('progressionService', () => {
       // Position 3 in 4-slot progression (slot n-1, last slot)
       const bonus2 = calculateFunctionBonus('D', 3, 4, null)
 
-      expect(bonus1).toBe(0.10)
-      expect(bonus2).toBe(0.10)
+      expect(bonus1).toBe(0.1)
+      expect(bonus2).toBe(0.1)
     })
 
     it('gives no bonus for dominant in early position', () => {

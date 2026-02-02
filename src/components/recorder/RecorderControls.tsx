@@ -80,7 +80,9 @@ export function RecorderControls({
           className="group relative flex h-14 w-14 cursor-pointer items-center justify-center rounded-full bg-gradient-to-b from-stone-700 to-stone-800 shadow-lg ring-4 ring-stone-800 transition-all hover:ring-stone-700 sm:h-16 sm:w-16"
         >
           <ResetIcon className="h-5 w-5 text-stone-400 sm:h-6 sm:w-6" />
-          <span className="absolute -bottom-6 text-[10px] text-stone-500 sm:-bottom-8 sm:text-xs">Reset</span>
+          <span className="absolute -bottom-6 text-[10px] text-stone-500 sm:-bottom-8 sm:text-xs">
+            Reset
+          </span>
         </button>
       )}
     </div>

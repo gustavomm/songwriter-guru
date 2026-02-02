@@ -44,7 +44,7 @@ export function hasSignificantPitchBend(
   threshold: number = SIGNIFICANT_BEND_THRESHOLD
 ): boolean {
   if (!note.pitchBend || note.pitchBend.length === 0) return false
-  return note.pitchBend.some(bend => Math.abs(bend) > threshold)
+  return note.pitchBend.some((bend) => Math.abs(bend) > threshold)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -69,9 +69,7 @@ export function limitPolyphony(
 
   for (const note of sorted) {
     // Find notes that overlap with this one
-    const overlapping = result.filter(n =>
-      n.endSec > note.startSec && n.startSec < note.endSec
-    )
+    const overlapping = result.filter((n) => n.endSec > note.startSec && n.startSec < note.endSec)
 
     if (overlapping.length < maxPolyphony) {
       result.push(note)
@@ -141,7 +139,7 @@ export function groupIntoPhrases(
  * Absorb short "wobble" notes that are ±wobbleSemitones from surrounding notes.
  * Pattern: A -> B -> A where B is ±wobbleSemitones from A and B is short
  * Result: Extend the first A to cover B and merge with second A
- * 
+ *
  * BUT: If the middle note has significant pitch bend, it's likely intentional
  * vibrato or a slide, so we preserve it instead of absorbing.
  */
@@ -169,7 +167,7 @@ export function absorbWobbleNotes(
       const isWobble =
         current.midi === after.midi && // Same pitch before and after
         Math.abs(middle.midi - current.midi) <= wobbleSemitones && // Middle is close
-        (middle.endSec - middle.startSec) < 0.2 && // Middle note is short (<200ms)
+        middle.endSec - middle.startSec < 0.2 && // Middle note is short (<200ms)
         !middleHasIntentionalBend // NOT an intentional bend/vibrato
 
       if (isWobble) {
@@ -290,7 +288,7 @@ export function smartMergeNotes(
   const phrases = groupIntoPhrases(notes, mergeThreshold)
 
   // Step 2: Clean up each phrase
-  const cleanedPhrases = phrases.map(phrase => 
+  const cleanedPhrases = phrases.map((phrase) =>
     cleanPhrase(phrase, wobbleSemitones, mergeThreshold)
   )
 

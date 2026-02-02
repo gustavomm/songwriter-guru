@@ -11,21 +11,23 @@ class MidiPlayer {
   private audioContext: AudioContext | null = null
   private masterGain: GainNode | null = null
   private compressor: DynamicsCompressorNode | null = null
-  private activeOscillators: Map<number, { osc: OscillatorNode; gain: GainNode }> = new Map()
+  // Reserved for future note-off functionality
+  // private activeOscillators: Map<number, { osc: OscillatorNode; gain: GainNode }> = new Map()
   private isPlayingSequence = false
   private sequenceAbortController: AbortController | null = null
-  private droneOscillators: { osc: OscillatorNode; osc2: OscillatorNode; gain: GainNode } | null = null
+  private droneOscillators: { osc: OscillatorNode; osc2: OscillatorNode; gain: GainNode } | null =
+    null
   private isPlayingScale = false
   private scaleAbortController: AbortController | null = null
 
   private getContext(): AudioContext {
     if (!this.audioContext) {
       this.audioContext = new AudioContext()
-      
+
       // Create master gain to control overall volume
       this.masterGain = this.audioContext.createGain()
       this.masterGain.gain.value = 0.7
-      
+
       // Create compressor to prevent clipping when multiple notes play
       this.compressor = this.audioContext.createDynamicsCompressor()
       this.compressor.threshold.value = -24
@@ -33,7 +35,7 @@ class MidiPlayer {
       this.compressor.ratio.value = 12
       this.compressor.attack.value = 0.003
       this.compressor.release.value = 0.25
-      
+
       // Chain: sources -> masterGain -> compressor -> destination
       this.masterGain.connect(this.compressor)
       this.compressor.connect(this.audioContext.destination)
@@ -75,7 +77,7 @@ class MidiPlayer {
     gain.gain.setValueAtTime(0, now)
     gain.gain.linearRampToValueAtTime(adjustedVelocity * 0.7, now + attackTime)
     gain.gain.linearRampToValueAtTime(sustainLevel, now + attackTime + decayTime)
-    
+
     const releaseStart = now + durationMs / 1000
     gain.gain.setValueAtTime(sustainLevel, releaseStart)
     gain.gain.linearRampToValueAtTime(0, releaseStart + releaseTime)
@@ -84,7 +86,7 @@ class MidiPlayer {
     const osc2 = ctx.createOscillator()
     osc2.type = 'sine'
     osc2.frequency.setValueAtTime(freq * 2, ctx.currentTime)
-    
+
     const gain2 = ctx.createGain()
     gain2.gain.setValueAtTime(0, now)
     gain2.gain.linearRampToValueAtTime(adjustedVelocity * 0.15, now + attackTime)
@@ -101,7 +103,7 @@ class MidiPlayer {
     // Start and stop
     osc.start(now)
     osc2.start(now)
-    
+
     const stopTime = releaseStart + releaseTime + 0.1
     osc.stop(stopTime)
     osc2.stop(stopTime)
@@ -130,14 +132,12 @@ class MidiPlayer {
 
     // Sort notes by start time
     const sortedNotes = [...notes].sort((a, b) => a.startSec - b.startSec)
-    const startTime = sortedNotes[0].startSec
 
     try {
       for (let i = 0; i < sortedNotes.length; i++) {
         if (this.sequenceAbortController.signal.aborted) break
 
         const note = sortedNotes[i]
-        const delay = (note.startSec - startTime) * 1000
         const duration = (note.endSec - note.startSec) * 1000
 
         // Wait until it's time to play this note
@@ -186,7 +186,7 @@ class MidiPlayer {
   }
 
   private sleep(ms: number, signal?: AbortSignal): Promise<void> {
-    return new Promise((resolve, reject) => {
+    return new Promise((resolve) => {
       const timeout = setTimeout(resolve, ms)
       signal?.addEventListener('abort', () => {
         clearTimeout(timeout)
@@ -324,9 +324,9 @@ class MidiPlayer {
    */
   playChordBySymbol(
     symbol: string,
-    octave: number = 3,
-    durationMs: number = 800,
-    velocity: number = 0.35
+    _octave: number = 3,
+    _durationMs: number = 800,
+    _velocity: number = 0.35
   ): void {
     // This is a convenience method - the actual chord lookup
     // should be done in the component using Tonal.Chord.get()

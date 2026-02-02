@@ -284,7 +284,7 @@ function createMockSlots(chords: string[], romans: string[]): ProgressionSlot[] 
   return chords.map((symbol, i) => {
     const roman = romans[i]
     // Find a chord from mockChords catalog if available
-    const catalogChord = allMockChords.find(c => c.symbol === symbol)
+    const catalogChord = allMockChords.find((c) => c.symbol === symbol)
     const chosen: ChordSuggestion = catalogChord || {
       id: symbol,
       symbol,

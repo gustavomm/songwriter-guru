@@ -101,9 +101,7 @@ export function HarmonicFieldsPanel() {
   return (
     <div className="rounded-2xl border border-stone-800 bg-gradient-to-b from-stone-900 to-stone-900/50 p-5 shadow-xl shadow-black/20">
       <div className="mb-4 flex items-center gap-2">
-        <div
-          className={`h-2 w-2 rounded-full ${hasResults ? 'bg-violet-500' : 'bg-stone-600'}`}
-        />
+        <div className={`h-2 w-2 rounded-full ${hasResults ? 'bg-violet-500' : 'bg-stone-600'}`} />
         <h2 className="text-sm font-semibold uppercase tracking-wider text-stone-400">
           Detected Keys / Modes
         </h2>
@@ -117,7 +115,8 @@ export function HarmonicFieldsPanel() {
       {/* Hint about drone feature */}
       {hasResults && recording?.audioUrl && (
         <div className="mb-3 rounded-lg bg-stone-800/30 px-3 py-2 text-xs text-stone-500">
-          <span className="text-violet-400">Tip:</span> Click "Drone" to play your recording with a tonic bass note underneath
+          <span className="text-violet-400">Tip:</span> Click "Drone" to play your recording with a
+          tonic bass note underneath
         </div>
       )}
 

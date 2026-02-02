@@ -61,9 +61,7 @@ export function extractFeatures(notes: TranscribedNote[]): RiffFeatures {
   const lastNotePc = midiToPitchClass(lastNote.midi)
 
   // Get bass note's pitch class (lowest MIDI note)
-  const lowestNote = notes.reduce((lowest, note) =>
-    note.midi < lowest.midi ? note : lowest
-  )
+  const lowestNote = notes.reduce((lowest, note) => (note.midi < lowest.midi ? note : lowest))
   const bassPc = midiToPitchClass(lowestNote.midi)
 
   return {

@@ -61,18 +61,12 @@ export function Toggle({
         <div className="ml-0.5 flex h-3.5 w-6 items-center rounded-full bg-stone-700 p-0.5 transition-colors sm:ml-1 sm:h-4 sm:w-7">
           <div
             className={`h-2.5 w-2.5 rounded-full transition-all sm:h-3 sm:w-3 ${colorClasses[activeColor].dot} ${
-              isOn
-                ? 'translate-x-0'
-                : 'translate-x-2.5 sm:translate-x-3'
+              isOn ? 'translate-x-0' : 'translate-x-2.5 sm:translate-x-3'
             }`}
           />
         </div>
       </button>
-      {hint && (
-        <span className="text-[9px] text-stone-500 sm:text-[10px]">
-          {hint}
-        </span>
-      )}
+      {hint && <span className="text-[9px] text-stone-500 sm:text-[10px]">{hint}</span>}
     </div>
   )
 }

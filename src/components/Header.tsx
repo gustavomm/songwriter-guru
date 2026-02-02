@@ -22,9 +22,7 @@ export function Header() {
             <h1 className="font-display text-2xl font-bold tracking-tight text-amber-50">
               Riff Harmonics
             </h1>
-            <p className="text-xs text-stone-500">
-              Discover chords for your melodies
-            </p>
+            <p className="text-xs text-stone-500">Discover chords for your melodies</p>
           </div>
         </div>
       </div>

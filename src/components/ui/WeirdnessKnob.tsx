@@ -11,14 +11,21 @@ interface WeirdnessKnobProps {
   disabled?: boolean
 }
 
-export function WeirdnessKnob({ value, onChange, onChangeComplete, disabled = false }: WeirdnessKnobProps) {
+export function WeirdnessKnob({
+  value,
+  onChange,
+  onChangeComplete,
+  disabled = false,
+}: WeirdnessKnobProps) {
   const knobRef = useRef<HTMLDivElement>(null)
   const [isDragging, setIsDragging] = useState(false)
   const lastAngle = useRef<number | null>(null)
   const valueRef = useRef(value) // Track latest value for onChangeComplete
 
-  // Keep valueRef in sync
-  valueRef.current = value
+  // Keep valueRef in sync (must be in effect, not during render)
+  useEffect(() => {
+    valueRef.current = value
+  }, [value])
 
   // Rotation: -135° (7 o'clock, 0%) to +135° (5 o'clock, 100%)
   const rotation = -135 + value * 270
@@ -40,24 +47,33 @@ export function WeirdnessKnob({ value, onChange, onChangeComplete, disabled = fa
   }, [])
 
   // Unified handler for both mouse and touch start
-  const handlePointerDown = useCallback((clientX: number, clientY: number) => {
-    if (disabled) return
-    setIsDragging(true)
-    lastAngle.current = getAngleFromCenter(clientX, clientY)
-  }, [disabled, getAngleFromCenter])
+  const handlePointerDown = useCallback(
+    (clientX: number, clientY: number) => {
+      if (disabled) return
+      setIsDragging(true)
+      lastAngle.current = getAngleFromCenter(clientX, clientY)
+    },
+    [disabled, getAngleFromCenter]
+  )
 
-  const handleMouseDown = useCallback((e: React.MouseEvent) => {
-    e.preventDefault()
-    handlePointerDown(e.clientX, e.clientY)
-  }, [handlePointerDown])
+  const handleMouseDown = useCallback(
+    (e: React.MouseEvent) => {
+      e.preventDefault()
+      handlePointerDown(e.clientX, e.clientY)
+    },
+    [handlePointerDown]
+  )
 
-  const handleTouchStart = useCallback((e: React.TouchEvent) => {
-    e.preventDefault()
-    const touch = e.touches[0]
-    if (touch) {
-      handlePointerDown(touch.clientX, touch.clientY)
-    }
-  }, [handlePointerDown])
+  const handleTouchStart = useCallback(
+    (e: React.TouchEvent) => {
+      e.preventDefault()
+      const touch = e.touches[0]
+      if (touch) {
+        handlePointerDown(touch.clientX, touch.clientY)
+      }
+    },
+    [handlePointerDown]
+  )
 
   useEffect(() => {
     if (!isDragging) return
@@ -119,15 +135,18 @@ export function WeirdnessKnob({ value, onChange, onChangeComplete, disabled = fa
   }, [isDragging, onChange, onChangeComplete, getAngleFromCenter])
 
   // Handle scroll wheel
-  const handleWheel = useCallback((e: React.WheelEvent) => {
-    if (disabled) return
-    e.preventDefault()
-    const delta = e.deltaY > 0 ? -0.05 : 0.05
-    const newValue = Math.max(0, Math.min(1, value + delta))
-    onChange(newValue)
-    // Also fire onChangeComplete for wheel (immediate feedback)
-    onChangeComplete?.(newValue)
-  }, [disabled, value, onChange, onChangeComplete])
+  const handleWheel = useCallback(
+    (e: React.WheelEvent) => {
+      if (disabled) return
+      e.preventDefault()
+      const delta = e.deltaY > 0 ? -0.05 : 0.05
+      const newValue = Math.max(0, Math.min(1, value + delta))
+      onChange(newValue)
+      // Also fire onChangeComplete for wheel (immediate feedback)
+      onChangeComplete?.(newValue)
+    },
+    [disabled, value, onChange, onChangeComplete]
+  )
 
   // Colors: green (safe) -> purple (mild) -> orange (spicy)
   const getIndicatorColor = () => {
@@ -165,7 +184,7 @@ export function WeirdnessKnob({ value, onChange, onChangeComplete, disabled = fa
         <svg className="absolute -inset-2 h-16 w-16" viewBox="0 0 64 64">
           {/* Tick marks - 11 marks from -135° to +135° */}
           {Array.from({ length: 11 }).map((_, i) => {
-            const tickAngle = -135 + (i * 27) // 270° / 10 = 27° per tick
+            const tickAngle = -135 + i * 27 // 270° / 10 = 27° per tick
             const radians = (tickAngle - 90) * (Math.PI / 180)
             const innerR = 26
             const outerR = 29
@@ -173,7 +192,7 @@ export function WeirdnessKnob({ value, onChange, onChangeComplete, disabled = fa
             const y1 = 32 + Math.sin(radians) * innerR
             const x2 = 32 + Math.cos(radians) * outerR
             const y2 = 32 + Math.sin(radians) * outerR
-            const isActive = (i / 10) <= value
+            const isActive = i / 10 <= value
             return (
               <line
                 key={i}
@@ -236,7 +255,8 @@ export function WeirdnessKnob({ value, onChange, onChangeComplete, disabled = fa
                 <div
                   className="h-2 w-full rounded-full"
                   style={{
-                    background: 'linear-gradient(to right, transparent, rgba(0,0,0,0.4), transparent)',
+                    background:
+                      'linear-gradient(to right, transparent, rgba(0,0,0,0.4), transparent)',
                   }}
                 />
               </div>
@@ -295,9 +315,7 @@ export function WeirdnessKnob({ value, onChange, onChangeComplete, disabled = fa
       </div>
 
       {/* Value label */}
-      <span className={`text-xs font-bold ${getLabelColor()}`}>
-        {getLabel()}
-      </span>
+      <span className={`text-xs font-bold ${getLabelColor()}`}>{getLabel()}</span>
     </div>
   )
 }

@@ -6,9 +6,9 @@ describe('featureExtraction', () => {
   describe('extractFeatures', () => {
     it('returns zero weights for empty notes array', () => {
       const result = extractFeatures([])
-      
+
       // All pitch class weights should be zero
-      expect(result.pcWeights.every(w => w === 0)).toBe(true)
+      expect(result.pcWeights.every((w) => w === 0)).toBe(true)
       expect(result.topPitchClasses).toEqual([])
       expect(result.lastNotePc).toBeUndefined()
       expect(result.bassPc).toBeUndefined()
@@ -16,12 +16,10 @@ describe('featureExtraction', () => {
 
     it('extracts pitch class from single note', () => {
       // C4 (MIDI 60) = pitch class 0
-      const notes: TranscribedNote[] = [
-        { startSec: 0, endSec: 1, midi: 60, velocity: 0.8 }
-      ]
-      
+      const notes: TranscribedNote[] = [{ startSec: 0, endSec: 1, midi: 60, velocity: 0.8 }]
+
       const result = extractFeatures(notes)
-      
+
       // Pitch class 0 (C) should have weight 1.0 (only note)
       expect(result.pcWeights[0]).toBeCloseTo(1.0, 2)
       // All other pitch classes should be 0
@@ -39,9 +37,9 @@ describe('featureExtraction', () => {
         { startSec: 0, endSec: 2, midi: 60, velocity: 0.5 }, // C4, 2s
         { startSec: 2, endSec: 3, midi: 64, velocity: 0.5 }, // E4, 1s
       ]
-      
+
       const result = extractFeatures(notes)
-      
+
       // C (pc 0) should have 2x the weight of E (pc 4) due to duration
       // Total weighted duration: 2*0.5 + 1*0.5 = 1.5
       // C weight: (2*0.5)/1.5 = 2/3 ≈ 0.667
@@ -56,9 +54,9 @@ describe('featureExtraction', () => {
         { startSec: 0, endSec: 1, midi: 60, velocity: 0.8 }, // C4, loud
         { startSec: 1, endSec: 2, midi: 64, velocity: 0.2 }, // E4, soft
       ]
-      
+
       const result = extractFeatures(notes)
-      
+
       // Total weighted duration: 1*0.8 + 1*0.2 = 1.0
       // C weight: 0.8/1.0 = 0.8
       // E weight: 0.2/1.0 = 0.2
@@ -73,9 +71,9 @@ describe('featureExtraction', () => {
         { startSec: 0, endSec: 2, midi: 60, velocity: 0.5 }, // C4
         { startSec: 2, endSec: 3, midi: 64, velocity: 1.0 }, // E4
       ]
-      
+
       const result = extractFeatures(notes)
-      
+
       // Both should have equal weight
       expect(result.pcWeights[0]).toBeCloseTo(0.5, 2) // C
       expect(result.pcWeights[4]).toBeCloseTo(0.5, 2) // E
@@ -86,9 +84,9 @@ describe('featureExtraction', () => {
         { startSec: 0, endSec: 1, midi: 60 }, // No velocity
         { startSec: 1, endSec: 2, midi: 64, velocity: 0.5 },
       ]
-      
+
       const result = extractFeatures(notes)
-      
+
       // Both should have equal weight (both use 0.5 velocity)
       expect(result.pcWeights[0]).toBeCloseTo(0.5, 2) // C
       expect(result.pcWeights[4]).toBeCloseTo(0.5, 2) // E
@@ -102,9 +100,9 @@ describe('featureExtraction', () => {
         { startSec: 2, endSec: 3, midi: 67, velocity: 0.6 }, // G4
         { startSec: 3, endSec: 3.1, midi: 62, velocity: 0.1 }, // D4 (weak passing tone)
       ]
-      
+
       const result = extractFeatures(notes)
-      
+
       // C, E, G should be in top pitch classes
       expect(result.topPitchClasses).toContain(0) // C
       expect(result.topPitchClasses).toContain(4) // E
@@ -122,9 +120,9 @@ describe('featureExtraction', () => {
         { startSec: 5, endSec: 6, midi: 69, velocity: 0.4 }, // A
         { startSec: 6, endSec: 7, midi: 71, velocity: 0.3 }, // B
       ]
-      
+
       const result = extractFeatures(notes)
-      
+
       expect(result.topPitchClasses.length).toBeLessThanOrEqual(5)
     })
 
@@ -134,9 +132,9 @@ describe('featureExtraction', () => {
         { startSec: 1, endSec: 2, midi: 64 }, // E4
         { startSec: 2, endSec: 3, midi: 67 }, // G4 - last note
       ]
-      
+
       const result = extractFeatures(notes)
-      
+
       // G = pitch class 7
       expect(result.lastNotePc).toBe(7)
     })
@@ -147,9 +145,9 @@ describe('featureExtraction', () => {
         { startSec: 0.5, endSec: 1, midi: 60 }, // C4
         { startSec: 0.5, endSec: 1, midi: 64 }, // E4
       ]
-      
+
       const result = extractFeatures(notes)
-      
+
       // Lowest MIDI is 48 (C3) = pitch class 0
       expect(result.bassPc).toBe(0)
     })
@@ -161,9 +159,9 @@ describe('featureExtraction', () => {
         { startSec: 1, endSec: 2, midi: 48, velocity: 0.5 }, // C3
         { startSec: 2, endSec: 3, midi: 60, velocity: 0.5 }, // C4
       ]
-      
+
       const result = extractFeatures(notes)
-      
+
       // All weight should be on pitch class 0 (C)
       expect(result.pcWeights[0]).toBeCloseTo(1.0, 2)
       for (let i = 1; i < 12; i++) {
@@ -177,9 +175,9 @@ describe('featureExtraction', () => {
         { startSec: 0, endSec: 1, midi: 63, velocity: 0.5 }, // D#4 / Eb4
         { startSec: 1, endSec: 2, midi: 70, velocity: 0.5 }, // A#4 / Bb4 (pitch class 10)
       ]
-      
+
       const result = extractFeatures(notes)
-      
+
       expect(result.pcWeights[3]).toBeCloseTo(0.5, 2) // D#/Eb
       expect(result.pcWeights[10]).toBeCloseTo(0.5, 2) // A#/Bb
     })
@@ -190,9 +188,9 @@ describe('featureExtraction', () => {
         { startSec: 0, endSec: 10, midi: 60, velocity: 1.0 }, // C - strong
         { startSec: 9.9, endSec: 10, midi: 62, velocity: 0.1 }, // D - very weak (0.1s * 0.1 = 0.01)
       ]
-      
+
       const result = extractFeatures(notes)
-      
+
       // D should be filtered out due to < 0.01 threshold
       // Total weighted duration: 10*1.0 + 0.1*0.1 = 10.01
       // D weight: 0.01/10.01 ≈ 0.001 (below 0.01 threshold)

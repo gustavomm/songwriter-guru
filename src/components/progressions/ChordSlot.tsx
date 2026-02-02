@@ -23,21 +23,15 @@ export function ChordSlot({ slot, isActive }: ChordSlotProps) {
         className={`flex flex-col items-center rounded-lg px-2 py-1 transition-all ${
           isActive
             ? 'bg-amber-500/20 ring-1 ring-amber-500/50'
-            : hasAlternatives ? 'cursor-help' : ''
+            : hasAlternatives
+              ? 'cursor-help'
+              : ''
         }`}
       >
-        <span
-          className={`text-lg font-bold ${
-            isActive ? 'text-amber-400' : 'text-stone-100'
-          }`}
-        >
+        <span className={`text-lg font-bold ${isActive ? 'text-amber-400' : 'text-stone-100'}`}>
           {slot.chosen.symbol}
         </span>
-        <span
-          className={`text-xs ${
-            isActive ? 'text-amber-500/70' : 'text-stone-500'
-          }`}
-        >
+        <span className={`text-xs ${isActive ? 'text-amber-500/70' : 'text-stone-500'}`}>
           {slot.role}
         </span>
         {/* Indicator for alternatives */}

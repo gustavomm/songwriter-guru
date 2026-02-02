@@ -9,10 +9,7 @@ export type { TranscribedNote, TranscriptionResult, TranscriptionPreset } from '
 
 export type { PitchClassWeights, RiffFeatures } from './features'
 
-export type {
-  HarmonicFieldCandidate,
-  HarmonyAnalysisResult,
-} from './harmony'
+export type { HarmonicFieldCandidate, HarmonyAnalysisResult } from './harmony'
 
 export type {
   ChordSource,
