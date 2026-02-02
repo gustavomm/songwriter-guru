@@ -1306,3 +1306,21 @@ function endsOnTonic(chordSymbol: string, tonic: string): boolean {
 
     return chordRoot === tonicPc
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Exports for Testing
+// ─────────────────────────────────────────────────────────────────────────────
+// These exports expose internal scoring functions for unit testing.
+// They are not part of the public API and may change without notice.
+
+export {
+    computeFinalScore,
+    scoreCadence,
+    scoreAppliedChordResolution,
+    scoreNeapolitanResolution,
+    scoreSubstituteResolution,
+    calculateFunctionBonus,
+    getHarmonicFunction,
+}
+
+export type { ProgressionScoreComponents, HarmonicFunction }

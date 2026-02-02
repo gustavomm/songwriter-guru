@@ -7,6 +7,7 @@ import {
 } from '@spotify/basic-pitch'
 import type { TranscribedNote, TranscriptionResult, RecordingAsset, TranscriptionPreset } from '../domain/types'
 import { prepareAudioForTranscription, prepareRawPcmForTranscription } from './audioDecoder'
+import { limitPolyphony, smartMergeNotes, DEFAULT_MAX_POLYPHONY } from './noteProcessing'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Constants
@@ -45,15 +46,6 @@ const GUITAR_MAX_FREQ = 2500 // Hz - high frets + harmonics
 // Amplitude floor for filtering weak/hallucinated notes
 const MIN_AMPLITUDE = 0.25
 
-// Guitar polyphony limit (6 strings max - filters hallucinated harmonics/artifacts)
-const MAX_POLYPHONY = 6
-
-// Pitch bend threshold for detecting intentional bends vs artifacts
-const SIGNIFICANT_BEND_THRESHOLD = 0.3 // semitones
-
-// Post-processing merge settings
-const MERGE_TIME_THRESHOLD = 0.15 // Max gap (seconds) to consider notes as "connected"
-const WOBBLE_SEMITONES = 1 // Pitch deviation to consider as wobble (half-step)
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Custom Error for Cancellation
@@ -303,67 +295,6 @@ class TranscriptionServiceImpl {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * Concatenate pitch bend arrays from merged notes.
- * Returns undefined if no bends exist.
- */
-function concatenatePitchBends(...notes: TranscribedNote[]): number[] | undefined {
-    const allBends: number[] = []
-    for (const note of notes) {
-        if (note.pitchBend && note.pitchBend.length > 0) {
-            allBends.push(...note.pitchBend)
-        }
-    }
-    return allBends.length > 0 ? allBends : undefined
-}
-
-/**
- * Check if a note has significant pitch bend (likely intentional vibrato/slide).
- */
-function hasSignificantPitchBend(note: TranscribedNote): boolean {
-    if (!note.pitchBend || note.pitchBend.length === 0) return false
-    return note.pitchBend.some(bend => Math.abs(bend) > SIGNIFICANT_BEND_THRESHOLD)
-}
-
-/**
- * Limit polyphony to MAX_POLYPHONY simultaneous notes (guitar has 6 strings).
- * When more notes overlap, keep the ones with highest amplitude.
- * This filters out hallucinated notes from harmonics/artifacts.
- */
-function limitPolyphony(notes: TranscribedNote[]): TranscribedNote[] {
-    if (notes.length <= MAX_POLYPHONY) return notes
-
-    // Sort by start time
-    const sorted = [...notes].sort((a, b) => a.startSec - b.startSec)
-
-    const result: TranscribedNote[] = []
-
-    for (const note of sorted) {
-        // Find notes that overlap with this one
-        const overlapping = result.filter(n =>
-            n.endSec > note.startSec && n.startSec < note.endSec
-        )
-
-        if (overlapping.length < MAX_POLYPHONY) {
-            result.push(note)
-        } else {
-            // Check if this note has higher amplitude than any overlapping note
-            const lowestAmp = overlapping.reduce((min, n) =>
-                (n.velocity ?? 0) < (min.velocity ?? 0) ? n : min
-            )
-            if ((note.velocity ?? 0) > (lowestAmp.velocity ?? 0)) {
-                // Remove lowest and add this one
-                const idx = result.indexOf(lowestAmp)
-                result.splice(idx, 1)
-                result.push(note)
-            }
-            // Otherwise, drop this note (likely hallucination)
-        }
-    }
-
-    return result.sort((a, b) => a.startSec - b.startSec)
-}
-
-/**
  * Convert Basic Pitch NoteEventTime[] to our TranscribedNote[] format.
  * 
  * Processing pipeline:
@@ -387,7 +318,7 @@ function convertToTranscribedNotes(
         .sort((a, b) => a.startSec - b.startSec)
 
     // Step 2: Apply polyphony limit (filter hallucinated harmonics/artifacts)
-    const polyLimited = limitPolyphony(notes)
+    const polyLimited = limitPolyphony(notes, DEFAULT_MAX_POLYPHONY)
 
     // Step 3: Smart merge with pitch bend awareness
     const merged = smartMergeNotes(polyLimited)
@@ -395,180 +326,8 @@ function convertToTranscribedNotes(
     return merged
 }
 
-/**
- * Smart merge algorithm:
- * 1. Group notes that are temporally connected (within MERGE_TIME_THRESHOLD)
- * 2. Within each group, identify "anchor" notes and absorb wobble notes (±1 semitone)
- * 3. Merge consecutive same-pitch notes into longer sustained notes
- * 4. Preserve gaps between groups (intentional rests)
- */
-function smartMergeNotes(notes: TranscribedNote[]): TranscribedNote[] {
-    if (notes.length === 0) return []
-
-    // Step 1: Group notes into phrases (connected sequences)
-    const phrases = groupIntoPhrases(notes)
-
-    // Step 2: Clean up each phrase
-    const cleanedPhrases = phrases.map(cleanPhrase)
-
-    // Step 3: Flatten back to single array
-    return cleanedPhrases.flat()
-}
-
-/**
- * Group notes into phrases based on temporal proximity.
- * A new phrase starts when there's a gap > MERGE_TIME_THRESHOLD with no notes.
- */
-function groupIntoPhrases(notes: TranscribedNote[]): TranscribedNote[][] {
-    if (notes.length === 0) return []
-
-    const phrases: TranscribedNote[][] = []
-    let currentPhrase: TranscribedNote[] = [notes[0]]
-
-    for (let i = 1; i < notes.length; i++) {
-        const prev = notes[i - 1]
-        const curr = notes[i]
-
-        // Check if there's a significant gap
-        const gap = curr.startSec - prev.endSec
-
-        if (gap > MERGE_TIME_THRESHOLD) {
-            // Start a new phrase
-            phrases.push(currentPhrase)
-            currentPhrase = [curr]
-        } else {
-            // Continue current phrase
-            currentPhrase.push(curr)
-        }
-    }
-
-    // Don't forget the last phrase
-    phrases.push(currentPhrase)
-
-    return phrases
-}
-
-/**
- * Clean up a phrase by:
- * 1. Identifying dominant pitches
- * 2. Absorbing wobble notes (±1 semitone surrounded by same pitch)
- * 3. Merging consecutive same-pitch notes
- */
-function cleanPhrase(phrase: TranscribedNote[]): TranscribedNote[] {
-    if (phrase.length === 0) return []
-    if (phrase.length === 1) return phrase
-
-    // Step 1: Absorb wobble notes into surrounding dominant pitch
-    const deWobbled = absorbWobbleNotes(phrase)
-
-    // Step 2: Merge consecutive same-pitch notes
-    const merged = mergeConsecutiveSamePitch(deWobbled)
-
-    return merged
-}
-
-/**
- * Absorb short "wobble" notes that are ±1 semitone from surrounding notes.
- * Pattern: A -> B -> A where B is ±1 semitone from A and B is short
- * Result: Extend the first A to cover B and merge with second A
- * 
- * BUT: If the middle note has significant pitch bend, it's likely intentional
- * vibrato or a slide, so we preserve it instead of absorbing.
- */
-function absorbWobbleNotes(notes: TranscribedNote[]): TranscribedNote[] {
-    if (notes.length < 3) return notes
-
-    const result: TranscribedNote[] = []
-    let i = 0
-
-    while (i < notes.length) {
-        const current = notes[i]
-
-        // Look ahead: is this a wobble pattern? (A -> wobble -> A)
-        if (i + 2 < notes.length) {
-            const middle = notes[i + 1]
-            const after = notes[i + 2]
-
-            // Check if middle note has significant pitch bend (likely intentional)
-            const middleHasIntentionalBend = hasSignificantPitchBend(middle)
-
-            const isWobble =
-                current.midi === after.midi && // Same pitch before and after
-                Math.abs(middle.midi - current.midi) <= WOBBLE_SEMITONES && // Middle is close
-                (middle.endSec - middle.startSec) < 0.2 && // Middle note is short (<200ms)
-                !middleHasIntentionalBend // NOT an intentional bend/vibrato
-
-            if (isWobble) {
-                // Merge all three into one note with the dominant pitch
-                // Preserve pitch bends from all three notes
-                const vel1 = current.velocity ?? 0.5
-                const vel2 = after.velocity ?? 0.5
-                result.push({
-                    startSec: current.startSec,
-                    endSec: after.endSec,
-                    midi: current.midi, // Use the dominant pitch
-                    velocity: (vel1 + vel2) / 2,
-                    pitchBend: concatenatePitchBends(current, middle, after),
-                })
-                i += 3 // Skip all three notes
-                continue
-            }
-        }
-
-        // Not a wobble pattern, keep the note with its pitch bend
-        result.push({ ...current })
-        i++
-    }
-
-    return result
-}
-
-/**
- * Merge consecutive notes with the same pitch into longer notes.
- * Preserves pitch bends by concatenating them when merging.
- */
-function mergeConsecutiveSamePitch(notes: TranscribedNote[]): TranscribedNote[] {
-    if (notes.length === 0) return []
-
-    const result: TranscribedNote[] = []
-    let current = { ...notes[0] }
-
-    for (let i = 1; i < notes.length; i++) {
-        const next = notes[i]
-        const gap = next.startSec - current.endSec
-
-        // Merge if same pitch and close together (or overlapping)
-        if (next.midi === current.midi && gap <= MERGE_TIME_THRESHOLD) {
-            // Extend current note
-            current.endSec = Math.max(current.endSec, next.endSec)
-            // Average velocities
-            if (current.velocity !== undefined && next.velocity !== undefined) {
-                current.velocity = (current.velocity + next.velocity) / 2
-            }
-            // Concatenate pitch bends when merging
-            current.pitchBend = concatenatePitchBends(current, next)
-        } else {
-            // Different pitch or gap too large - save and start new
-            result.push(current)
-            current = { ...next }
-        }
-    }
-
-    // Don't forget the last note
-    result.push(current)
-
-    return result
-}
-
-/**
- * Convert MIDI number to note name (e.g., 60 -> "C4")
- */
-export function midiToNoteName(midi: number): string {
-    const noteNames = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
-    const octave = Math.floor(midi / 12) - 1
-    const noteName = noteNames[midi % 12]
-    return `${noteName}${octave}`
-}
+// Re-export midiToNoteName from noteUtils for backwards compatibility
+export { midiToNoteName } from './noteUtils'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Export singleton instance
