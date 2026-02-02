@@ -2,7 +2,7 @@
 // Simple MIDI Note Player using Web Audio API
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { midiToFrequency, noteNameToMidi } from './noteUtils'
+import { midiToFrequency, noteNameToMidi, chordNotesToMidi } from './noteUtils'
 
 /**
  * Simple synth using Web Audio API oscillator + envelope
@@ -306,8 +306,8 @@ class MidiPlayer {
   ): void {
     if (notes.length === 0) return
 
-    // Convert notes to MIDI with proper ascending order
-    const midiNotes = this.scaleNotesToMidi(notes, octave)
+    // Convert notes to MIDI with consistent voicing
+    const midiNotes = chordNotesToMidi(notes, octave)
 
     // Play each note with slight stagger for strummed effect
     const staggerMs = 20 // 20ms between notes for natural feel

@@ -1,0 +1,27 @@
+# Cursor Rules for songwriter-guru
+
+## Code Quality Checks
+
+After completing code changes, always run the following checks before finishing your response:
+
+1. **Format Check** - Verify code formatting is correct:
+   ```bash
+   npm run format:check
+   ```
+
+2. **Lint Check** - Check for linting errors:
+   ```bash
+   npm run lint
+   ```
+
+3. **Unit Tests** - Run all unit tests:
+   ```bash
+   npm test -- --run
+   ```
+
+If any check fails:
+- For format issues: Run `npm run format` to fix formatting, then verify with `format:check`
+- For lint issues: Fix the linting errors in the code
+- For test failures: Fix the failing tests or update tests if the behavior change was intentional
+
+Only consider the task complete when all three checks pass successfully.

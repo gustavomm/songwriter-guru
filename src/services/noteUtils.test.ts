@@ -1,5 +1,11 @@
 import { describe, it, expect } from 'vitest'
-import { midiToFrequency, noteNameToMidi, midiToNoteName } from './noteUtils'
+import {
+  midiToFrequency,
+  noteNameToMidi,
+  midiToNoteName,
+  noteToPitchClass,
+  chordNotesToMidi,
+} from './noteUtils'
 
 describe('noteUtils', () => {
   describe('midiToFrequency', () => {
@@ -181,6 +187,129 @@ describe('noteUtils', () => {
       // Convert frequency back to MIDI using the formula: 69 + 12 * log2(f/440)
       const backToMidi = 69 + 12 * Math.log2(freq / 440)
       expect(backToMidi).toBeCloseTo(midi, 5)
+    })
+  })
+
+  describe('noteToPitchClass', () => {
+    it('converts natural notes to pitch classes', () => {
+      expect(noteToPitchClass('C')).toBe(0)
+      expect(noteToPitchClass('D')).toBe(2)
+      expect(noteToPitchClass('E')).toBe(4)
+      expect(noteToPitchClass('F')).toBe(5)
+      expect(noteToPitchClass('G')).toBe(7)
+      expect(noteToPitchClass('A')).toBe(9)
+      expect(noteToPitchClass('B')).toBe(11)
+    })
+
+    it('converts sharps to pitch classes', () => {
+      expect(noteToPitchClass('C#')).toBe(1)
+      expect(noteToPitchClass('D#')).toBe(3)
+      expect(noteToPitchClass('F#')).toBe(6)
+      expect(noteToPitchClass('G#')).toBe(8)
+      expect(noteToPitchClass('A#')).toBe(10)
+    })
+
+    it('converts flats to pitch classes (normalized to sharps)', () => {
+      expect(noteToPitchClass('Db')).toBe(1) // Same as C#
+      expect(noteToPitchClass('Eb')).toBe(3) // Same as D#
+      expect(noteToPitchClass('Gb')).toBe(6) // Same as F#
+      expect(noteToPitchClass('Ab')).toBe(8) // Same as G#
+      expect(noteToPitchClass('Bb')).toBe(10) // Same as A#
+    })
+
+    it('handles edge case flats', () => {
+      expect(noteToPitchClass('Fb')).toBe(4) // Same as E
+      expect(noteToPitchClass('Cb')).toBe(11) // Same as B
+    })
+
+    it('returns 0 for unknown notes', () => {
+      expect(noteToPitchClass('X')).toBe(0)
+      expect(noteToPitchClass('')).toBe(0)
+    })
+  })
+
+  describe('chordNotesToMidi', () => {
+    it('returns empty array for empty input', () => {
+      expect(chordNotesToMidi([])).toEqual([])
+    })
+
+    it('voices C major triad at octave 4 (C-F roots use baseOctave+1)', () => {
+      // C has pitch class 0 (≤5), so it uses baseOctave+1 = octave 4
+      const result = chordNotesToMidi(['C', 'E', 'G'], 3)
+      expect(result).toEqual([60, 64, 67]) // C4, E4, G4
+    })
+
+    it('voices G major triad at octave 3 (G-B roots use baseOctave)', () => {
+      // G has pitch class 7 (>5), so it uses baseOctave = octave 3
+      const result = chordNotesToMidi(['G', 'B', 'D'], 3)
+      expect(result).toEqual([55, 59, 62]) // G3, B3, D4
+    })
+
+    it('voices A minor triad at octave 3', () => {
+      // A has pitch class 9 (>5), so it uses baseOctave = octave 3
+      const result = chordNotesToMidi(['A', 'C', 'E'], 3)
+      expect(result).toEqual([57, 60, 64]) // A3, C4, E4
+    })
+
+    it('voices B minor 7th chord at octave 3', () => {
+      // B has pitch class 11 (>5), so it uses baseOctave = octave 3
+      const result = chordNotesToMidi(['B', 'D', 'F#', 'A'], 3)
+      expect(result).toEqual([59, 62, 66, 69]) // B3, D4, F#4, A4
+    })
+
+    it('voices F major triad at octave 4 (F is pitch class 5, ≤5)', () => {
+      // F has pitch class 5 (≤5), so it uses baseOctave+1 = octave 4
+      const result = chordNotesToMidi(['F', 'A', 'C'], 3)
+      expect(result).toEqual([65, 69, 72]) // F4, A4, C5
+    })
+
+    it('voices F# major triad at octave 3 (F# is pitch class 6, >5)', () => {
+      // F# has pitch class 6 (>5), so it uses baseOctave = octave 3
+      const result = chordNotesToMidi(['F#', 'A#', 'C#'], 3)
+      expect(result).toEqual([54, 58, 61]) // F#3, A#3, C#4
+    })
+
+    it('keeps all chord roots within a similar MIDI range', () => {
+      // Test that all roots fall within roughly an octave (MIDI 54-65)
+      const cRoot = chordNotesToMidi(['C', 'E', 'G'], 3)[0] // Should be C4 = 60
+      const fRoot = chordNotesToMidi(['F', 'A', 'C'], 3)[0] // Should be F4 = 65
+      const fSharpRoot = chordNotesToMidi(['F#', 'A#', 'C#'], 3)[0] // Should be F#3 = 54
+      const bRoot = chordNotesToMidi(['B', 'D#', 'F#'], 3)[0] // Should be B3 = 59
+
+      // All roots should be between F#3 (54) and F4 (65)
+      expect(cRoot).toBeGreaterThanOrEqual(54)
+      expect(cRoot).toBeLessThanOrEqual(65)
+      expect(fRoot).toBeGreaterThanOrEqual(54)
+      expect(fRoot).toBeLessThanOrEqual(65)
+      expect(fSharpRoot).toBeGreaterThanOrEqual(54)
+      expect(fSharpRoot).toBeLessThanOrEqual(65)
+      expect(bRoot).toBeGreaterThanOrEqual(54)
+      expect(bRoot).toBeLessThanOrEqual(65)
+    })
+
+    it('handles flats in chord tones', () => {
+      // Bb major: Bb, D, F - Bb has pitch class 10 (>5), uses baseOctave
+      const result = chordNotesToMidi(['Bb', 'D', 'F'], 3)
+      expect(result).toEqual([58, 62, 65]) // Bb3, D4, F4
+    })
+
+    it('calculates correct intervals for 7th chords', () => {
+      // Cmaj7: C, E, G, B - intervals should be 0, 4, 7, 11
+      const result = chordNotesToMidi(['C', 'E', 'G', 'B'], 3)
+      const root = result[0]
+      expect(result[1] - root).toBe(4) // Major third
+      expect(result[2] - root).toBe(7) // Perfect fifth
+      expect(result[3] - root).toBe(11) // Major seventh
+    })
+
+    it('respects different base octaves', () => {
+      // With baseOctave 2, C should be at octave 3
+      const resultOctave2 = chordNotesToMidi(['C', 'E', 'G'], 2)
+      expect(resultOctave2).toEqual([48, 52, 55]) // C3, E3, G3
+
+      // With baseOctave 4, C should be at octave 5
+      const resultOctave4 = chordNotesToMidi(['C', 'E', 'G'], 4)
+      expect(resultOctave4).toEqual([72, 76, 79]) // C5, E5, G5
     })
   })
 })
