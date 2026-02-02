@@ -21,9 +21,8 @@ import { limitPolyphony, smartMergeNotes, DEFAULT_MAX_POLYPHONY } from './notePr
 // Basic Pitch expects 22050Hz sample rate
 const TARGET_SAMPLE_RATE = 22050
 
-// Model path - Basic Pitch includes model in node_modules
-// We'll copy to public/ for production, or use dynamic import path
-const MODEL_PATH = '/basic-pitch-model/model.json'
+// Model path - uses Vite's BASE_URL to work with GitHub Pages subdirectory
+const MODEL_PATH = `${import.meta.env.BASE_URL}basic-pitch-model/model.json`
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Transcription Tuning Parameters
