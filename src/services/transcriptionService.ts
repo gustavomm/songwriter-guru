@@ -11,13 +11,23 @@ import type {
   RecordingAsset,
   TranscriptionPreset,
 } from '../domain/types'
-import { prepareAudioForTranscription, prepareRawPcmForTranscription } from './audioDecoder'
+import {
+  prepareAudioForTranscription,
+  prepareRawPcmForTranscription,
+  type AudioMetrics,
+} from './audioDecoder'
 import {
   limitPolyphony,
   smartMergeNotes,
   filterIsolatedNoiseNotes,
   DEFAULT_MAX_POLYPHONY,
 } from './noteProcessing'
+import {
+  detectOnsets,
+  snapNotesToOnsets,
+  hasStrongOnsetNear,
+  type OnsetEvent,
+} from './onsetDetection'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Constants
@@ -30,41 +40,122 @@ const TARGET_SAMPLE_RATE = 22050
 const MODEL_PATH = `${import.meta.env.BASE_URL}basic-pitch-model/model.json`
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Transcription Tuning Parameters
-// Adjust these to find the sweet spot for your use case:
-// - Higher values = fewer notes detected (stricter)
-// - Lower values = more notes detected (more sensitive)
+// Base Transcription Parameters
+// These are the baseline values that get adjusted by adaptive thresholds
 // ─────────────────────────────────────────────────────────────────────────────
 
-// Detection thresholds - TUNED FOR LESS NOISE
-// Onset threshold: 0.5 is the default, higher = stricter onset detection
-const ONSET_THRESHOLD = 0.5 // Range: 0.3 (sensitive) to 0.7 (strict)
+// Base onset threshold: 0.5 is the default
+// Higher = stricter onset detection, fewer false positives
+const BASE_ONSET_THRESHOLD = 0.5
 
-// Frame threshold: explicit value for more consistent detection
-// 0.3 is default, higher = requires stronger pitch activation
-const FRAME_THRESHOLD = 0.35 // Range: 0.2 (sensitive) to 0.5 (strict)
+// Base frame threshold: requires pitch activation to be above this
+// Higher = requires stronger pitch confidence
+const BASE_FRAME_THRESHOLD = 0.35
 
-// Basic Pitch timing: 22050Hz sample rate, 256-sample hop
-// → ~86 frames/sec → ~11.6ms per frame
-// 13 frames ≈ 150ms - slightly longer minimum to filter out noise spikes
-const MIN_NOTE_LENGTH = 13 // Frames (~11.6ms each, total ~150ms)
+// Minimum note length in frames (~11.6ms per frame at 22050Hz)
+// 11 frames ≈ 128ms - minimum for real notes
+const BASE_MIN_NOTE_LENGTH = 11
 
 // Energy tolerance: how quickly a note can decay before being cut off
 const ENERGY_TOLERANCE = 11
 
 // Guitar frequency range (for filtering false positives)
-// Low: ~70Hz supports drop tunings (Drop D low is ~73Hz, Drop C is ~65Hz)
-// High: ~2500Hz covers highest frets + strong upper partials
-const GUITAR_MIN_FREQ = 70 // Hz - supports drop tunings
-const GUITAR_MAX_FREQ = 2500 // Hz - high frets + harmonics
+// Low: ~65Hz supports drop C tuning
+// High: ~3000Hz covers highest frets + upper harmonics
+const GUITAR_MIN_FREQ = 65
+const GUITAR_MAX_FREQ = 3000
 
-// Amplitude floor for filtering weak/hallucinated notes
-// INCREASED from 0.25 to filter more aggressively
-const MIN_AMPLITUDE = 0.35
+// Base amplitude floor for filtering weak notes
+const BASE_MIN_AMPLITUDE = 0.3
 
 // Minimum note duration in seconds (post-processing filter)
-// Notes shorter than this are likely noise artifacts
-const MIN_NOTE_DURATION_SEC = 0.08 // 80ms minimum
+const BASE_MIN_NOTE_DURATION_SEC = 0.06 // 60ms minimum
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Adaptive Threshold Configuration
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Adaptive thresholds calculated from audio metrics.
+ */
+interface AdaptiveThresholds {
+  onsetThreshold: number
+  frameThreshold: number
+  minNoteLength: number
+  minAmplitude: number
+  minNoteDuration: number
+}
+
+/**
+ * Calculate adaptive thresholds based on audio metrics.
+ *
+ * The idea: adjust detection sensitivity based on input characteristics:
+ * - Quieter recordings get more sensitive detection (lower thresholds)
+ * - Noisier recordings get stricter detection (higher thresholds)
+ * - Higher dynamic range suggests more transients (sensitive onset detection)
+ */
+function calculateAdaptiveThresholds(
+  metrics: AudioMetrics,
+  preset: TranscriptionPreset
+): AdaptiveThresholds {
+  // Signal-to-noise ratio estimate (how much signal above noise floor)
+  const snrDb = metrics.rmsLevelDb - metrics.noiseFloorDb
+
+  // SNR factor: good SNR (>20dB) = full sensitivity, poor SNR (<10dB) = reduced sensitivity
+  // Range: 0.7 to 1.0
+  const snrFactor = Math.min(1.0, Math.max(0.7, 0.5 + snrDb / 40))
+
+  // Dynamic range factor: high dynamic range (>15dB) indicates clear transients
+  // For lead playing, we want more sensitive onset detection with high dynamics
+  // Range: 0.85 to 1.0
+  const dynamicFactor = metrics.hasTransients ? 0.9 : 1.0
+
+  // Level factor: after normalization, this reflects original recording quality
+  // Very quiet original recordings may have more noise even after normalization
+  // Use the original RMS level before normalization
+  // Range: 0.8 to 1.0
+  const originalLevel = metrics.rmsLevelDb
+  const levelFactor = Math.min(1.0, Math.max(0.8, 0.6 - originalLevel / 50))
+
+  // Preset adjustments
+  const presetOnsetBoost = preset === 'chord' ? 0.05 : 0
+  const presetFrameBoost = preset === 'chord' ? 0.05 : 0
+  const presetMinLengthBoost = preset === 'chord' ? 2 : 0
+
+  // Calculate final thresholds
+  // For thresholds, lower = more sensitive, so multiply by factors
+  const onsetThreshold = Math.min(
+    0.7,
+    Math.max(0.3, (BASE_ONSET_THRESHOLD + presetOnsetBoost) * snrFactor)
+  )
+
+  const frameThreshold = Math.min(
+    0.5,
+    Math.max(0.2, (BASE_FRAME_THRESHOLD + presetFrameBoost) * snrFactor * dynamicFactor)
+  )
+
+  // Min note length: increase for noisy signals
+  const minNoteLength = Math.round((BASE_MIN_NOTE_LENGTH + presetMinLengthBoost) / snrFactor)
+
+  // Min amplitude: lower for clean signals with good dynamics
+  const minAmplitude = Math.min(
+    0.5,
+    Math.max(0.2, BASE_MIN_AMPLITUDE * levelFactor * (metrics.hasTransients ? 0.9 : 1.0))
+  )
+
+  // Min duration: slightly shorter for signals with clear transients
+  const minNoteDuration = metrics.hasTransients
+    ? BASE_MIN_NOTE_DURATION_SEC * 0.8
+    : BASE_MIN_NOTE_DURATION_SEC
+
+  return {
+    onsetThreshold,
+    frameThreshold,
+    minNoteLength,
+    minAmplitude,
+    minNoteDuration,
+  }
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Custom Error for Cancellation
@@ -144,6 +235,9 @@ class TranscriptionServiceImpl {
    * Uses lossless PCM data when available (from AudioWorklet capture),
    * otherwise falls back to decoding the compressed blob.
    *
+   * Now includes adaptive thresholds based on audio analysis for improved
+   * detection across different recording conditions.
+   *
    * @param recordingAsset - The recorded audio to transcribe
    * @param preset - 'lead' for single notes/riffs, 'chord' for strumming (default: 'lead')
    * @param onProgress - Progress callback
@@ -171,8 +265,10 @@ class TranscriptionServiceImpl {
       }
 
       // Step 2: Prepare audio (lossless or lossy path)
+      // Now includes metrics from audio analysis
       let audioData: Float32Array
       let durationMs: number
+      let metrics: AudioMetrics
 
       if (recordingAsset.pcmData && recordingAsset.pcmSampleRate) {
         // HQ Path: Use raw PCM data (lossless)
@@ -184,12 +280,14 @@ class TranscriptionServiceImpl {
         )
         audioData = prepared.audioData
         durationMs = prepared.durationMs
+        metrics = prepared.metrics
       } else {
         // Fallback: Decode compressed blob (lossy)
         onProgress?.(10, 'Decoding audio...')
         const prepared = await prepareAudioForTranscription(recordingAsset.blob, TARGET_SAMPLE_RATE)
         audioData = prepared.audioData
         durationMs = prepared.durationMs
+        metrics = prepared.metrics
       }
 
       // Check for cancellation
@@ -197,7 +295,32 @@ class TranscriptionServiceImpl {
         throw new TranscriptionCancelledError()
       }
 
-      // Step 3: Run inference
+      // Step 3: Calculate adaptive thresholds based on audio metrics
+      const thresholds = calculateAdaptiveThresholds(metrics, preset)
+
+      // Step 3b: Run onset detection for improved timing
+      const detectedOnsets = detectOnsets(audioData, TARGET_SAMPLE_RATE)
+
+      // Log metrics and thresholds for debugging (development only)
+      if (import.meta.env.DEV) {
+        console.log('[Transcription] Audio metrics:', {
+          peakDb: metrics.peakLevelDb.toFixed(1),
+          rmsDb: metrics.rmsLevelDb.toFixed(1),
+          noiseFloorDb: metrics.noiseFloorDb.toFixed(1),
+          dynamicRangeDb: metrics.dynamicRangeDb.toFixed(1),
+          hasTransients: metrics.hasTransients,
+        })
+        console.log('[Transcription] Adaptive thresholds:', {
+          onset: thresholds.onsetThreshold.toFixed(3),
+          frame: thresholds.frameThreshold.toFixed(3),
+          minNoteLength: thresholds.minNoteLength,
+          minAmplitude: thresholds.minAmplitude.toFixed(3),
+          minNoteDuration: thresholds.minNoteDuration.toFixed(3),
+        })
+        console.log('[Transcription] Detected onsets:', detectedOnsets.length)
+      }
+
+      // Step 4: Run inference
       onProgress?.(15, 'Transcribing...')
 
       // Collect results from the callback - accumulate all frames
@@ -232,7 +355,7 @@ class TranscriptionServiceImpl {
         throw new TranscriptionCancelledError()
       }
 
-      // Step 4: Convert to note events
+      // Step 5: Convert to note events using adaptive thresholds
       onProgress?.(90, 'Processing notes...')
 
       // Preset-specific settings
@@ -241,22 +364,17 @@ class TranscriptionServiceImpl {
       const inferOnsets = preset === 'lead'
       const melodiaTrick = preset === 'lead'
 
-      // Adjust thresholds based on preset
-      // Chord mode uses slightly higher thresholds to reduce noise from strumming
-      const effectiveOnsetThresh = preset === 'chord' ? ONSET_THRESHOLD + 0.05 : ONSET_THRESHOLD
-      const effectiveFrameThresh = preset === 'chord' ? FRAME_THRESHOLD + 0.05 : FRAME_THRESHOLD
-
-      // Convert frames/onsets to note events using tuning constants
+      // Convert frames/onsets to note events using adaptive thresholds
       const noteEvents = outputToNotesPoly(
         allFrames,
         allOnsets,
-        effectiveOnsetThresh,
-        effectiveFrameThresh, // Use explicit frame threshold for consistent detection
-        MIN_NOTE_LENGTH,
-        inferOnsets, // preset-dependent: helps detect notes without clear attacks
-        GUITAR_MAX_FREQ, // maxFreq: filter high-frequency artifacts
-        GUITAR_MIN_FREQ, // minFreq: filter sub-bass rumble
-        melodiaTrick, // preset-dependent: helps with melodic content
+        thresholds.onsetThreshold,
+        thresholds.frameThreshold,
+        thresholds.minNoteLength,
+        inferOnsets,
+        GUITAR_MAX_FREQ,
+        GUITAR_MIN_FREQ,
+        melodiaTrick,
         ENERGY_TOLERANCE
       )
 
@@ -271,22 +389,21 @@ class TranscriptionServiceImpl {
       // Convert to timed notes
       const allTimedNotes = noteFramesToTime(notesWithBends)
 
-      // Filter out weak/hallucinated notes based on amplitude AND duration
-      // This two-stage filter catches both quiet noise and short spikes
+      // Filter out weak/hallucinated notes using adaptive thresholds
       const timedNotes = allTimedNotes.filter((note) => {
-        // Filter 1: Amplitude must be above minimum
-        if (note.amplitude < MIN_AMPLITUDE) return false
+        // Filter 1: Amplitude must be above adaptive minimum
+        if (note.amplitude < thresholds.minAmplitude) return false
 
-        // Filter 2: Duration must be above minimum
-        if (note.durationSeconds < MIN_NOTE_DURATION_SEC) return false
+        // Filter 2: Duration must be above adaptive minimum
+        if (note.durationSeconds < thresholds.minNoteDuration) return false
 
         return true
       })
 
-      // Step 5: Convert to our TranscribedNote format
+      // Step 6: Convert to our TranscribedNote format with onset enhancement
       onProgress?.(95, 'Finalizing...')
 
-      const notes = convertToTranscribedNotes(timedNotes, durationMs)
+      const notes = convertToTranscribedNotes(timedNotes, durationMs, detectedOnsets)
 
       // Calculate range
       const midiValues = notes.map((n) => n.midi)
@@ -325,16 +442,19 @@ class TranscriptionServiceImpl {
  *
  * Processing pipeline:
  * 1. Convert to our TranscribedNote format
- * 2. Filter isolated noise notes (weak notes with no neighbors)
- * 3. Apply polyphony limit (max 6 simultaneous notes for guitar)
- * 4. Smart merge with pitch bend awareness
+ * 2. Snap note start times to detected onsets (improved timing)
+ * 3. Filter isolated noise notes (weak notes with no neighbors)
+ * 4. Apply polyphony limit (max 6 simultaneous notes for guitar)
+ * 5. Smart merge with pitch bend awareness
+ * 6. Filter weak notes without clear onset support
  */
 function convertToTranscribedNotes(
   timedNotes: NoteEventTime[],
-  _durationMs: number
+  _durationMs: number,
+  detectedOnsets: OnsetEvent[] = []
 ): TranscribedNote[] {
   // Step 1: Convert to our format
-  const notes = timedNotes
+  let notes = timedNotes
     .map((note) => ({
       startSec: note.startTimeSeconds,
       endSec: note.startTimeSeconds + note.durationSeconds,
@@ -344,16 +464,47 @@ function convertToTranscribedNotes(
     }))
     .sort((a, b) => a.startSec - b.startSec)
 
-  // Step 2: Filter isolated noise notes (weak notes far from other notes)
+  // Step 2: Snap note start times to detected onsets for better timing
+  if (detectedOnsets.length > 0) {
+    notes = snapNotesToOnsets(notes, detectedOnsets, 0.03) // 30ms snap window
+  }
+
+  // Step 3: Filter isolated noise notes (weak notes far from other notes)
   const noiseFiltered = filterIsolatedNoiseNotes(notes)
 
-  // Step 3: Apply polyphony limit (filter hallucinated harmonics/artifacts)
+  // Step 4: Apply polyphony limit (filter hallucinated harmonics/artifacts)
   const polyLimited = limitPolyphony(noiseFiltered, DEFAULT_MAX_POLYPHONY)
 
-  // Step 4: Smart merge with pitch bend awareness
+  // Step 5: Smart merge with pitch bend awareness
   const merged = smartMergeNotes(polyLimited)
 
-  return merged
+  // Step 6: Additional filtering - remove weak notes that don't have onset support
+  // This helps catch false positives that passed through other filters
+  const onsetFiltered =
+    detectedOnsets.length > 0 ? filterWeakNotesWithoutOnset(merged, detectedOnsets) : merged
+
+  return onsetFiltered
+}
+
+/**
+ * Filter out weak notes that don't have a corresponding detected onset.
+ * Strong notes are kept regardless of onset detection.
+ */
+function filterWeakNotesWithoutOnset(
+  notes: TranscribedNote[],
+  onsets: OnsetEvent[],
+  weakThreshold: number = 0.4, // Notes below this velocity are considered "weak"
+  onsetSearchWindow: number = 0.05 // 50ms window to find onset
+): TranscribedNote[] {
+  return notes.filter((note) => {
+    // Strong notes are always kept
+    if ((note.velocity ?? 1) >= weakThreshold) {
+      return true
+    }
+
+    // For weak notes, require onset support
+    return hasStrongOnsetNear(onsets, note.startSec, onsetSearchWindow, 0.2)
+  })
 }
 
 // Re-export midiToNoteName from noteUtils for backwards compatibility

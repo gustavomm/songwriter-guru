@@ -1,7 +1,10 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // Audio Decoder: Blob → AudioBuffer
-// Includes pre-processing for improved transcription accuracy
+// Includes professional-grade pre-processing for improved transcription accuracy
 // ─────────────────────────────────────────────────────────────────────────────
+
+import { analyzeAudio, normalizeAudio, type AudioMetrics } from './audioAnalysis'
+import { spectralNoiseReduction, shouldApplyNoiseReduction } from './spectralProcessing'
 
 export interface DecodedAudio {
   audioBuffer: AudioBuffer
@@ -9,20 +12,58 @@ export interface DecodedAudio {
   durationMs: number
 }
 
+export interface PreparedAudio {
+  audioData: Float32Array
+  originalSampleRate: number
+  durationMs: number
+  metrics: AudioMetrics
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Audio Pre-processing Constants
 // ─────────────────────────────────────────────────────────────────────────────
 
-// High-pass filter to remove low-frequency rumble (below guitar's low E ~82Hz)
-// Using 60Hz to allow for drop tunings
-const HIGH_PASS_FREQUENCY = 60
+// High-pass filter to remove low-frequency rumble
+// 65Hz supports drop C tuning (~65Hz) while filtering sub-bass
+const HIGH_PASS_FREQUENCY = 65
 
-// Low-pass filter to remove high-frequency hiss/noise (above guitar's useful range)
-const LOW_PASS_FREQUENCY = 4000
+// Low-pass filter - increased to 5kHz to preserve more harmonics
+// Basic Pitch will handle the frequency selection
+const LOW_PASS_FREQUENCY = 5000
 
-// Noise gate threshold (RMS below this is considered silence/noise)
-// Expressed as a fraction of the signal's peak amplitude
-const NOISE_GATE_THRESHOLD = 0.02
+// AC hum frequencies to notch out (50Hz in Europe, 60Hz in Americas)
+const HUM_FREQUENCIES = [50, 60]
+// Harmonics of hum frequencies
+const HUM_HARMONICS = [100, 120, 150, 180]
+
+// Notch filter Q values (higher = narrower notch)
+const NOTCH_Q_FUNDAMENTAL = 30 // Narrow notch for fundamentals
+const NOTCH_Q_HARMONIC = 20 // Slightly wider for harmonics
+
+// Target normalization level in dBFS
+// -3dBFS is industry standard for headroom
+const TARGET_PEAK_DBFS = -3
+
+// Noise gate threshold - adaptive based on noise floor
+// This is the ratio above noise floor to consider as signal
+// Lower values = more signal passes through
+const NOISE_GATE_RATIO = 1.5
+
+// Gate smoothing parameters (in samples at 22050Hz)
+const GATE_ATTACK_SAMPLES = 220 // ~10ms attack
+const GATE_RELEASE_SAMPLES = 1102 // ~50ms release
+
+// Spectral noise reduction threshold
+// Apply spectral NR if noise floor is above this level (dB)
+// Conservative threshold to avoid processing clean signals
+const SPECTRAL_NR_THRESHOLD_DB = -40
+
+// Frequency bands for frequency-aware gating
+const FREQ_BANDS = {
+  bass: { low: 0, high: 250, weight: 0.3 },
+  mid: { low: 250, high: 2000, weight: 0.5 },
+  high: { low: 2000, high: 8000, weight: 0.2 },
+}
 
 /**
  * Decode an audio Blob into an AudioBuffer using the Web Audio API.
@@ -58,7 +99,8 @@ export function audioBufferToMono(audioBuffer: AudioBuffer): Float32Array {
   const numChannels = audioBuffer.numberOfChannels
 
   if (numChannels === 1) {
-    return audioBuffer.getChannelData(0)
+    // Return a copy to avoid modifying the original buffer
+    return new Float32Array(audioBuffer.getChannelData(0))
   }
 
   // Mix down to mono by averaging all channels
@@ -114,14 +156,14 @@ export async function resampleAudio(
 }
 
 /**
- * Apply a biquad filter to an AudioBuffer.
- * Used for high-pass and low-pass filtering.
+ * Apply multiple filters in a chain using a single OfflineAudioContext.
  */
-async function applyBiquadFilter(
+async function applyFilterChain(
   audioBuffer: AudioBuffer,
-  filterType: BiquadFilterType,
-  frequency: number
+  filters: Array<{ type: BiquadFilterType; frequency: number; Q: number }>
 ): Promise<AudioBuffer> {
+  if (filters.length === 0) return audioBuffer
+
   const offlineContext = new OfflineAudioContext(
     audioBuffer.numberOfChannels,
     audioBuffer.length,
@@ -132,76 +174,300 @@ async function applyBiquadFilter(
   const source = offlineContext.createBufferSource()
   source.buffer = audioBuffer
 
-  // Create filter
-  const filter = offlineContext.createBiquadFilter()
-  filter.type = filterType
-  filter.frequency.value = frequency
-  filter.Q.value = 0.707 // Butterworth response (flat passband)
+  // Create and chain filters
+  let currentNode: AudioNode = source
+  for (const filterConfig of filters) {
+    const filter = offlineContext.createBiquadFilter()
+    filter.type = filterConfig.type
+    filter.frequency.value = filterConfig.frequency
+    filter.Q.value = filterConfig.Q
+    currentNode.connect(filter)
+    currentNode = filter
+  }
 
-  // Connect: source -> filter -> destination
-  source.connect(filter)
-  filter.connect(offlineContext.destination)
+  // Connect last filter to destination
+  currentNode.connect(offlineContext.destination)
   source.start(0)
 
   return offlineContext.startRendering()
 }
 
 /**
- * Apply a simple noise gate to audio data.
- * Reduces samples below the threshold to zero.
+ * Apply multi-band filtering for noise reduction:
+ * 1. Notch filters for AC hum (50/60Hz and harmonics)
+ * 2. High-pass filter for sub-bass rumble
+ * 3. Low-pass filter for high-frequency noise
  */
-function applyNoiseGate(audioData: Float32Array, threshold: number): Float32Array {
-  // Find peak amplitude
-  let peak = 0
-  for (let i = 0; i < audioData.length; i++) {
-    const abs = Math.abs(audioData[i])
-    if (abs > peak) peak = abs
+async function applyMultiBandFiltering(audioBuffer: AudioBuffer): Promise<AudioBuffer> {
+  const filters: Array<{ type: BiquadFilterType; frequency: number; Q: number }> = []
+
+  // 1. Notch filters for AC hum fundamentals (50Hz and 60Hz)
+  for (const freq of HUM_FREQUENCIES) {
+    filters.push({ type: 'notch', frequency: freq, Q: NOTCH_Q_FUNDAMENTAL })
   }
 
-  // Calculate absolute threshold
-  const absThreshold = peak * threshold
+  // 2. Notch filters for hum harmonics (100Hz, 120Hz, 150Hz, 180Hz)
+  for (const freq of HUM_HARMONICS) {
+    filters.push({ type: 'notch', frequency: freq, Q: NOTCH_Q_HARMONIC })
+  }
 
-  // Apply gate with smoothing (to avoid clicks)
+  // 3. High-pass filter for sub-bass rumble
+  filters.push({ type: 'highpass', frequency: HIGH_PASS_FREQUENCY, Q: 0.707 })
+
+  // 4. Low-pass filter for high-frequency noise
+  filters.push({ type: 'lowpass', frequency: LOW_PASS_FREQUENCY, Q: 0.707 })
+
+  return applyFilterChain(audioBuffer, filters)
+}
+
+/**
+ * Simple band-pass filter for frequency band isolation.
+ * Uses a pair of biquad filters (high-pass + low-pass).
+ */
+async function isolateFrequencyBand(
+  audioBuffer: AudioBuffer,
+  lowFreq: number,
+  highFreq: number
+): Promise<AudioBuffer> {
+  const filters: Array<{ type: BiquadFilterType; frequency: number; Q: number }> = []
+
+  if (lowFreq > 0) {
+    filters.push({ type: 'highpass', frequency: lowFreq, Q: 0.707 })
+  }
+  if (highFreq < audioBuffer.sampleRate / 2) {
+    filters.push({ type: 'lowpass', frequency: highFreq, Q: 0.707 })
+  }
+
+  if (filters.length === 0) return audioBuffer
+  return applyFilterChain(audioBuffer, filters)
+}
+
+/**
+ * Apply a frequency-aware adaptive noise gate.
+ *
+ * This gate analyzes energy in multiple frequency bands and applies
+ * gating based on where the signal energy is concentrated.
+ * This helps preserve low-frequency content (bass notes) while
+ * gating high-frequency noise more aggressively.
+ */
+async function applyFrequencyAwareGate(
+  audioBuffer: AudioBuffer,
+  noiseFloorLinear: number,
+  sampleRate: number
+): Promise<Float32Array> {
+  // Get mono audio data
+  const audioData = audioBufferToMono(audioBuffer)
+
+  // Calculate threshold as a multiple of the noise floor
+  const threshold = noiseFloorLinear * NOISE_GATE_RATIO
+
+  // Scale attack/release to current sample rate
+  const attackSamples = Math.round((GATE_ATTACK_SAMPLES * sampleRate) / 22050)
+  const releaseSamples = Math.round((GATE_RELEASE_SAMPLES * sampleRate) / 22050)
+
+  // Calculate attack/release coefficients
+  const attackCoeff = 1 - Math.exp(-1 / attackSamples)
+  const releaseCoeff = 1 - Math.exp(-1 / releaseSamples)
+
+  // Analyze frequency bands for weighted gating decision
+  // This is done once for the whole signal to save computation
+  const bandBuffers: { band: keyof typeof FREQ_BANDS; data: Float32Array }[] = []
+
+  for (const [bandName, bandConfig] of Object.entries(FREQ_BANDS)) {
+    try {
+      const bandBuffer = await isolateFrequencyBand(audioBuffer, bandConfig.low, bandConfig.high)
+      bandBuffers.push({
+        band: bandName as keyof typeof FREQ_BANDS,
+        data: audioBufferToMono(bandBuffer),
+      })
+    } catch {
+      // If band isolation fails, use full band
+      bandBuffers.push({
+        band: bandName as keyof typeof FREQ_BANDS,
+        data: audioData,
+      })
+    }
+  }
+
   const result = new Float32Array(audioData.length)
-  const smoothingWindow = 64 // samples for smoothing
+  let envelope = 0
+  let gateGain = 0
+
+  // RMS window size (about 10ms)
+  const rmsWindow = Math.round(sampleRate * 0.01)
 
   for (let i = 0; i < audioData.length; i++) {
-    // Calculate local RMS for gate decision
-    let sumSquares = 0
-    const windowStart = Math.max(0, i - smoothingWindow)
-    const windowEnd = Math.min(audioData.length, i + smoothingWindow)
-    for (let j = windowStart; j < windowEnd; j++) {
-      sumSquares += audioData[j] * audioData[j]
-    }
-    const rms = Math.sqrt(sumSquares / (windowEnd - windowStart))
+    // Calculate weighted RMS across frequency bands
+    let weightedRms = 0
+    const windowStart = Math.max(0, i - rmsWindow)
+    const windowEnd = Math.min(audioData.length, i + rmsWindow)
+    const windowLength = windowEnd - windowStart
 
-    // Apply soft gate (smooth transition)
-    if (rms < absThreshold) {
-      // Below threshold - attenuate based on how far below
-      const attenuation = rms / absThreshold
-      result[i] = audioData[i] * attenuation * attenuation // Quadratic for smoother gate
-    } else {
-      result[i] = audioData[i]
+    for (const { band, data } of bandBuffers) {
+      let bandSumSquares = 0
+      for (let j = windowStart; j < windowEnd; j++) {
+        bandSumSquares += data[j] * data[j]
+      }
+      const bandRms = Math.sqrt(bandSumSquares / windowLength)
+      weightedRms += bandRms * FREQ_BANDS[band].weight
     }
+
+    // Update envelope with attack/release
+    if (weightedRms > envelope) {
+      envelope = envelope + attackCoeff * (weightedRms - envelope)
+    } else {
+      envelope = envelope + releaseCoeff * (weightedRms - envelope)
+    }
+
+    // Calculate gate gain (smooth transition)
+    const targetGain = envelope > threshold ? 1 : Math.pow(envelope / threshold, 2)
+
+    // Smooth the gain changes
+    if (targetGain > gateGain) {
+      gateGain = gateGain + attackCoeff * (targetGain - gateGain)
+    } else {
+      gateGain = gateGain + releaseCoeff * (targetGain - gateGain)
+    }
+
+    result[i] = audioData[i] * gateGain
   }
 
   return result
 }
 
 /**
- * Pre-process audio for transcription:
- * 1. High-pass filter to remove rumble
- * 2. Low-pass filter to remove hiss
- * 3. Noise gate to reduce background noise
+ * Simple adaptive noise gate (fallback when frequency-aware is not needed).
+ * Uses the analyzed noise floor for intelligent gating.
  */
-async function preprocessAudioBuffer(audioBuffer: AudioBuffer): Promise<AudioBuffer> {
-  // Step 1: High-pass filter (remove low-frequency rumble)
-  let processed = await applyBiquadFilter(audioBuffer, 'highpass', HIGH_PASS_FREQUENCY)
+function applySimpleNoiseGate(
+  audioData: Float32Array,
+  noiseFloorLinear: number,
+  sampleRate: number
+): Float32Array {
+  // Calculate threshold as a multiple of the noise floor
+  const threshold = noiseFloorLinear * NOISE_GATE_RATIO
 
-  // Step 2: Low-pass filter (remove high-frequency hiss)
-  processed = await applyBiquadFilter(processed, 'lowpass', LOW_PASS_FREQUENCY)
+  // Scale attack/release to current sample rate
+  const attackSamples = Math.round((GATE_ATTACK_SAMPLES * sampleRate) / 22050)
+  const releaseSamples = Math.round((GATE_RELEASE_SAMPLES * sampleRate) / 22050)
 
-  return processed
+  // Calculate attack/release coefficients
+  const attackCoeff = 1 - Math.exp(-1 / attackSamples)
+  const releaseCoeff = 1 - Math.exp(-1 / releaseSamples)
+
+  const result = new Float32Array(audioData.length)
+  let envelope = 0
+  let gateGain = 0
+
+  // RMS window size (about 10ms)
+  const rmsWindow = Math.round(sampleRate * 0.01)
+
+  for (let i = 0; i < audioData.length; i++) {
+    // Calculate local RMS
+    let sumSquares = 0
+    const windowStart = Math.max(0, i - rmsWindow)
+    const windowEnd = Math.min(audioData.length, i + rmsWindow)
+    const windowLength = windowEnd - windowStart
+
+    for (let j = windowStart; j < windowEnd; j++) {
+      sumSquares += audioData[j] * audioData[j]
+    }
+    const rms = Math.sqrt(sumSquares / windowLength)
+
+    // Update envelope with attack/release
+    if (rms > envelope) {
+      envelope = envelope + attackCoeff * (rms - envelope)
+    } else {
+      envelope = envelope + releaseCoeff * (rms - envelope)
+    }
+
+    // Calculate gate gain (smooth transition)
+    const targetGain = envelope > threshold ? 1 : Math.pow(envelope / threshold, 2)
+
+    // Smooth the gain changes
+    if (targetGain > gateGain) {
+      gateGain = gateGain + attackCoeff * (targetGain - gateGain)
+    } else {
+      gateGain = gateGain + releaseCoeff * (targetGain - gateGain)
+    }
+
+    result[i] = audioData[i] * gateGain
+  }
+
+  return result
+}
+
+/**
+ * Full pre-processing pipeline for transcription:
+ * 1. Multi-band filtering (notch + HP + LP)
+ * 2. Resampling to target rate
+ * 3. Convert to mono
+ * 4. Analyze audio metrics
+ * 5. Spectral noise reduction (if signal is noisy)
+ * 6. Normalize to target level
+ * 7. Frequency-aware noise gate
+ */
+async function preprocessForTranscription(
+  audioBuffer: AudioBuffer,
+  targetSampleRate: number
+): Promise<{ audioData: Float32Array; metrics: AudioMetrics }> {
+  // Step 1: Multi-band filtering (before resampling for better quality)
+  const filteredBuffer = await applyMultiBandFiltering(audioBuffer)
+
+  // Step 2: Resample to target rate
+  const resampledBuffer = await resampleAudio(filteredBuffer, targetSampleRate)
+
+  // Step 3: Convert to mono Float32Array
+  let audioData = audioBufferToMono(resampledBuffer)
+
+  // Step 4: Analyze audio metrics (before normalization)
+  const metrics = analyzeAudio(audioData, targetSampleRate)
+
+  // Step 5: Apply spectral noise reduction for noisy signals
+  // This helps clean up background noise before pitch detection
+  const isNoisy = shouldApplyNoiseReduction(audioData, metrics.noiseFloorDb)
+  let spectralNrApplied = false
+  if (isNoisy && metrics.noiseFloorDb > SPECTRAL_NR_THRESHOLD_DB) {
+    try {
+      audioData = spectralNoiseReduction(audioData, targetSampleRate)
+      spectralNrApplied = true
+    } catch (err) {
+      // If spectral NR fails, continue without it
+      console.warn('Spectral noise reduction failed, continuing without:', err)
+    }
+  }
+
+  // Step 6: Normalize to target level
+  normalizeAudio(audioData, TARGET_PEAK_DBFS)
+
+  // Step 7: Apply noise gate
+  // Convert noise floor from dB to linear for the gate
+  const noiseFloorLinear = Math.pow(10, metrics.noiseFloorDb / 20)
+
+  // If spectral NR was applied, use simple gate to avoid double-processing
+  // Otherwise, use frequency-aware gate for noisy signals
+  if (spectralNrApplied) {
+    // Spectral NR already cleaned the noise, use light simple gate
+    audioData = applySimpleNoiseGate(audioData, noiseFloorLinear, targetSampleRate)
+  } else if (isNoisy) {
+    // No spectral NR, use frequency-aware gate for better noise handling
+    const tempContext = new AudioContext()
+    try {
+      const tempBuffer = tempContext.createBuffer(1, audioData.length, targetSampleRate)
+      tempBuffer.copyToChannel(audioData, 0)
+      audioData = await applyFrequencyAwareGate(tempBuffer, noiseFloorLinear, targetSampleRate)
+    } catch {
+      // Fallback to simple gate if frequency-aware fails
+      audioData = applySimpleNoiseGate(audioData, noiseFloorLinear, targetSampleRate)
+    } finally {
+      await tempContext.close()
+    }
+  } else {
+    // Clean signal, use simple gate
+    audioData = applySimpleNoiseGate(audioData, noiseFloorLinear, targetSampleRate)
+  }
+
+  return { audioData, metrics }
 }
 
 /**
@@ -215,44 +481,32 @@ async function preprocessAudioBuffer(audioBuffer: AudioBuffer): Promise<AudioBuf
 export async function prepareAudioForTranscription(
   blob: Blob,
   targetSampleRate: number = 22050
-): Promise<{
-  audioData: Float32Array
-  originalSampleRate: number
-  durationMs: number
-}> {
+): Promise<PreparedAudio> {
   // Step 1: Decode the blob
   const { audioBuffer, sampleRate, durationMs } = await decodeAudioBlob(blob)
 
-  // Step 2: Pre-process (filter noise)
-  const filteredBuffer = await preprocessAudioBuffer(audioBuffer)
-
-  // Step 3: Resample to target rate (Basic Pitch expects 22050Hz)
-  const resampledBuffer = await resampleAudio(filteredBuffer, targetSampleRate)
-
-  // Step 4: Convert to mono Float32Array
-  let audioData = audioBufferToMono(resampledBuffer)
-
-  // Step 5: Apply noise gate
-  audioData = applyNoiseGate(audioData, NOISE_GATE_THRESHOLD)
+  // Step 2-6: Full pre-processing pipeline
+  const { audioData, metrics } = await preprocessForTranscription(audioBuffer, targetSampleRate)
 
   return {
     audioData,
     originalSampleRate: sampleRate,
     durationMs,
+    metrics,
   }
 }
 
 /**
  * Prepare raw PCM data for transcription (lossless path).
  *
- * This function takes raw PCM samples captured via AudioWorklet and resamples
- * them to the target sample rate for Basic Pitch. This bypasses MediaRecorder's
- * lossy compression for improved transcription accuracy.
+ * This function takes raw PCM samples captured via AudioWorklet and processes
+ * them for Basic Pitch. This bypasses MediaRecorder's lossy compression for
+ * improved transcription accuracy.
  *
- * Includes pre-processing:
- * - High-pass filter to remove rumble
- * - Low-pass filter to remove hiss
- * - Noise gate to reduce background noise
+ * Includes professional-grade pre-processing:
+ * - Multi-band filtering (notch + HP + LP)
+ * - Loudness normalization
+ * - Adaptive noise gate
  *
  * @param pcmData - Raw PCM samples as Float32Array (mono)
  * @param sourceSampleRate - Sample rate of the input data (typically 44100 or 48000 Hz)
@@ -262,11 +516,7 @@ export async function prepareRawPcmForTranscription(
   pcmData: Float32Array,
   sourceSampleRate: number,
   targetSampleRate: number = 22050
-): Promise<{
-  audioData: Float32Array
-  originalSampleRate: number
-  durationMs: number
-}> {
+): Promise<PreparedAudio> {
   const durationMs = Math.round((pcmData.length / sourceSampleRate) * 1000)
 
   // Create an AudioBuffer from the raw PCM data
@@ -274,31 +524,25 @@ export async function prepareRawPcmForTranscription(
 
   try {
     // Create a buffer with the raw PCM data
-    const sourceBuffer = audioContext.createBuffer(
-      1, // mono
-      pcmData.length,
-      sourceSampleRate
-    )
+    const sourceBuffer = audioContext.createBuffer(1, pcmData.length, sourceSampleRate)
     sourceBuffer.copyToChannel(new Float32Array(pcmData), 0)
 
-    // Step 1: Pre-process (filter noise) - do this before resampling for better quality
-    const filteredBuffer = await preprocessAudioBuffer(sourceBuffer)
-
-    // Step 2: Resample to target rate
-    const resampledBuffer = await resampleAudio(filteredBuffer, targetSampleRate)
-
-    // Step 3: Convert to mono Float32Array
-    let audioData = audioBufferToMono(resampledBuffer)
-
-    // Step 4: Apply noise gate
-    audioData = applyNoiseGate(audioData, NOISE_GATE_THRESHOLD)
+    // Full pre-processing pipeline
+    const { audioData, metrics } = await preprocessForTranscription(sourceBuffer, targetSampleRate)
 
     return {
       audioData,
       originalSampleRate: sourceSampleRate,
       durationMs,
+      metrics,
     }
   } finally {
     await audioContext.close()
   }
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Re-export for backwards compatibility and convenience
+// ─────────────────────────────────────────────────────────────────────────────
+
+export { analyzeAudio, type AudioMetrics } from './audioAnalysis'
