@@ -1,3 +1,5 @@
+import { ToneControls } from './tone/ToneControls'
+
 export function Header() {
   return (
     <header className="border-b border-amber-900/30 bg-gradient-to-r from-stone-950 via-stone-900 to-stone-950">
@@ -23,6 +25,9 @@ export function Header() {
               Riff Harmonics
             </h1>
             <p className="text-xs text-stone-500">Discover chords for your melodies</p>
+          </div>
+          <div className="ml-auto">
+            <ToneControls />
           </div>
         </div>
       </div>
