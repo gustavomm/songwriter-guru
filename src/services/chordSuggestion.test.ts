@@ -589,4 +589,42 @@ describe('chordSuggestion', () => {
       expect(scores.colorScore).toBeLessThanOrEqual(1)
     })
   })
+
+  describe('colour distance', () => {
+    const field = (tonic: string, mode: string): HarmonicFieldCandidate => ({
+      id: `${tonic}-${mode}`,
+      tonic,
+      mode,
+      scaleNotes: [],
+      fitScore: 1,
+      outOfScale: [],
+    })
+    const features: RiffFeatures = {
+      pcWeights: [0.3, 0, 0, 0, 0.3, 0, 0, 0.4, 0, 0, 0, 0],
+      topPitchClasses: [7, 0, 4],
+    }
+    const distances = (tonic: string, mode: string) => {
+      const result = generateChordSuggestions(field(tonic, mode), features)
+      return new Map([...result.byId.values()].map((c) => [c.symbol, c.colorDistance ?? -1]))
+    }
+
+    it('orders colour: diatonic < secondary dominant < borrowed < tritone sub', () => {
+      const d = distances('C', 'Major')
+      expect(d.get('C')).toBe(0)
+      expect(d.get('G7')).toBe(0)
+      expect(d.get('D7')).toBeCloseTo(0.45) // V7/V: one chromatic note
+      expect(d.get('Bb')).toBeCloseTo(0.5) // bVII
+      expect(d.get('Fm')).toBeCloseTo(0.5) // iv
+      expect(d.get('Ab')).toBeCloseTo(0.65) // bVI: two chromatic notes
+      expect(d.get('Eb7')!).toBeGreaterThan(1) // subV/ii: tritone sub, three chromatic notes
+    })
+
+    it('treats the minor leading tone as in key and colour variants as mild colour', () => {
+      const d = distances('A', 'Minor')
+      expect(d.get('Am')).toBe(0)
+      expect(d.get('E7')).toBe(0) // harmonic minor V7
+      expect(d.get('AmM7')).toBeCloseTo(0.3) // i(maj7)
+      expect(d.get('D')).toBeCloseTo(0.45) // melodic minor IV, F# outside the key
+    })
+  })
 })

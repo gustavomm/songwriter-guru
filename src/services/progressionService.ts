@@ -7,6 +7,7 @@ import type {
   HarmonicFieldCandidate,
   RiffFeatures,
 } from '../domain/types'
+import { colorBudget, colorPreference, isColorChord, isWithinReach } from './weirdness'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Constants
@@ -24,8 +25,18 @@ const DEFAULT_WEIRDNESS = 0.5
 // Selection penalty (scaled by 1 - weirdness) for diatonic colour variants such
 // as minor's i(maj7), i6 and III+, so safe progressions use plain i / i7
 const COLOR_VARIANT_SELECTION_PENALTY = 0.15
+// Extra selection penalty, at every weirdness, for colour variants on the
+// tonic root (i(maj7), i6): plain i / i7 lead, the variants show up through
+// the lower-ranked variety runs instead of opening every progression
+const COLOR_VARIANT_TONIC_PENALTY = 0.12
 // Below this weirdness, colour variants never fill a tonic slot
 const SAFE_TONIC_WEIRDNESS = 0.5
+
+// Number of progressions returned, and the minimum before the variety cap is relaxed
+const MAX_PROGRESSIONS = 15
+const MIN_PROGRESSIONS = 10
+// A colour chord appears in at most this many of the returned progressions
+const MAX_PROGRESSIONS_PER_COLOR_CHORD = 3
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Scoring Components
@@ -39,27 +50,40 @@ interface ProgressionScoreComponents {
   hasColorChord: boolean // Whether progression contains borrowed/secondary chords
 }
 
+/** Floor for the colour preference of chords beyond the reach (fallback slots) */
+const OUT_OF_REACH_PREFERENCE = -1
+
 /**
- * Compute a weirdness-adjusted chord selection score.
+ * Compute a weirdness-adjusted chord selection score: how well the chord
+ * fits the riff, plus the weirdness knob's view of its colour distance (see
+ * weirdness.ts). Plain diatonic chords get no adjustment; a colour chord
+ * starts slightly penalised once it comes within reach and gains a growing
+ * bonus as the knob turns up, so the knob acts smoothly rather than flipping
+ * between "no colour" and "all colour".
  *
- * At low weirdness: prefer high supportScore (fitting chords)
- * At high weirdness: prefer high colorScore (colorful chords)
- *
- * @param supportScore - How well the chord fits the riff (0-1)
- * @param colorScore - How colorful/interesting the chord is (0-1)
- * @param weirdness - 0 = prefer fitting, 1 = prefer colorful
+ * @param chord - The candidate chord
+ * @param weirdness - 0 = plain diatonic only, 1 = colour-forward
  */
-function computeChordSelectionScore(
-  supportScore: number,
-  colorScore: number,
-  weirdness: number
-): number {
-  // At weirdness=0: 100% supportScore, 0% colorScore
-  // At weirdness=1: 20% supportScore, 80% colorScore
-  // The supportScore floor ensures we don't pick completely clashing chords
-  const supportWeight = 1 - weirdness * 0.8
-  const colorWeight = weirdness * 0.8
-  return supportScore * supportWeight + colorScore * colorWeight
+function computeChordSelectionScore(chord: ChordSuggestion, weirdness: number): number {
+  return chord.supportScore + Math.max(OUT_OF_REACH_PREFERENCE, colorPreference(chord, weirdness))
+}
+
+/**
+ * Whether a progression earns the colour bonus of computeFinalScore: it needs
+ * a colour chord other than a colour-variant tonic, so i(maj7) / i6 (the
+ * cheapest colour available in minor) can't win that bonus on their own and
+ * crowd every high-weirdness progression
+ */
+function earnsColorBonus(chords: ChordSuggestion[], tonic: string): boolean {
+  const tonicChroma = Note.chroma(tonic)
+  return chords.some(
+    (c) => (c.source !== 'diatonic' || c.colorVariant) && !isColorVariantTonic(c, tonicChroma)
+  )
+}
+
+/** Whether a chord is a colour variant on the tonic root (i(maj7), i6) */
+function isColorVariantTonic(chord: ChordSuggestion, tonicChroma: number | undefined): boolean {
+  return !!chord.colorVariant && getRootChroma(chord) === tonicChroma
 }
 
 /**
@@ -290,7 +314,7 @@ function getResolutionInterval(chord: ChordSuggestion): number | null {
 /**
  * Get the pitch class (0-11) of a chord's root, or null if unknown.
  */
-function getRootChroma(chord: ChordSuggestion): number | null {
+export function getRootChroma(chord: ChordSuggestion): number | null {
   const root = Chord.get(chord.id).tonic ?? Chord.get(chord.symbol).tonic ?? chord.chordTones[0]
   if (!root) return null
   const chroma = Note.chroma(root)
@@ -458,6 +482,11 @@ function getRankedCandidates(
     filtered = filtered.filter((c) => c.source === 'diatonic')
   }
 
+  // Weirdness reach: only chords close enough to the key (keep the slot
+  // fillable if nothing is in reach)
+  const reachable = filtered.filter((c) => isWithinReach(c, weirdness))
+  if (reachable.length > 0) filtered = reachable
+
   // T1 constraint: must be the tonic root (I or i)
   if (targetFunction === 'T1') {
     filtered = filtered.filter((c) => getRootChroma(c) === tonicChroma)
@@ -483,8 +512,9 @@ function getRankedCandidates(
   // Sort by weirdness-adjusted score (descending). Diatonic colour variants
   // (i(maj7), i6, III+ in minor) are pushed down at low weirdness.
   const selectionScore = (c: ChordSuggestion) =>
-    computeChordSelectionScore(c.supportScore, c.colorScore, weirdness) -
-    (c.colorVariant ? COLOR_VARIANT_SELECTION_PENALTY * (1 - weirdness) : 0)
+    computeChordSelectionScore(c, weirdness) -
+    (c.colorVariant ? COLOR_VARIANT_SELECTION_PENALTY * (1 - weirdness) : 0) -
+    (isColorVariantTonic(c, tonicChroma) ? COLOR_VARIANT_TONIC_PENALTY : 0)
   return [...filtered].sort((a, b) => selectionScore(b) - selectionScore(a))
 }
 
@@ -584,14 +614,21 @@ function generateFromFunctionTemplate(
   // abandoned if that slot can't hold the target). Chords already used in the
   // progression are tried last to keep progressions varied.
   const selectedChords: ChordSuggestion[] = []
-  // Feasibility of slots i.. only depends on the chord before slot i
+  // Feasibility of slots i.. depends on the chord before slot i, the colour
+  // chords used so far and whether a colour-variant tonic was used
   const deadEnds = new Set<string>()
+  // Weirdness caps how many colour chords a progression holds; a
+  // colour-variant tonic (i(maj7), i6) appears at most once and never last
+  const budget = colorBudget(weirdness, slotCount)
+  const tonicChroma = Note.chroma(tonic)
 
   const fillSlot = (i: number): boolean => {
     if (i === slotCount) return true
 
     const prev = i > 0 ? selectedChords[i - 1] : null
-    const memoKey = `${i}|${prev?.symbol ?? ''}`
+    const colorUsed = selectedChords.filter(isColorChord).length
+    const colorTonicUsed = selectedChords.some((c) => isColorVariantTonic(c, tonicChroma))
+    const memoKey = `${i}|${prev?.symbol ?? ''}|${colorUsed}|${colorTonicUsed}`
     if (deadEnds.has(memoKey)) return false
 
     const used = new Set(selectedChords.map((c) => c.symbol))
@@ -603,6 +640,10 @@ function generateFromFunctionTemplate(
     for (const candidate of ordered) {
       if (prev && !isValidTransition(prev, candidate)) continue
       if (i === lastIndex && !isValidTransition(candidate, null)) continue
+      if (isColorChord(candidate) && colorUsed >= budget) continue
+      if (isColorVariantTonic(candidate, tonicChroma) && (colorTonicUsed || i === lastIndex)) {
+        continue
+      }
 
       selectedChords.push(candidate)
       if (fillSlot(i + 1)) return true
@@ -653,7 +694,7 @@ function generateFromFunctionTemplate(
     spice,
     motion: scoreMotion(selectedChords),
     cadence: cadenceScore,
-    hasColorChord,
+    hasColorChord: earnsColorBonus(selectedChords, tonic),
   }
   const score = computeFinalScore(components, weirdness)
 
@@ -697,7 +738,7 @@ function generateFromFunctionTemplate(
  * - 'soft': bVII / VII (subtonic) or a minor v (natural-minor cadences)
  * - null: not a dominant approach to the tonic (e.g. an applied subV/iii)
  */
-function getDominantApproach(
+export function getDominantApproach(
   chord: ChordSuggestion,
   tonicChroma: number
 ): 'authentic' | 'subV' | 'soft' | null {
@@ -823,7 +864,10 @@ export function generateProgressions(
         suggestion.slots.map((slot) => slot.chosen),
         tonic
       ),
-      hasColorChord: suggestion.containsColorChord,
+      hasColorChord: earnsColorBonus(
+        suggestion.slots.map((slot) => slot.chosen),
+        tonic
+      ),
     }
     return { ...suggestion, score: computeFinalScore(components, weirdness) }
   }
@@ -922,8 +966,13 @@ export function generateProgressions(
   // matching the tonic-slot rule in getRankedCandidates
   const hasColorVariantTonic = (s: ProgressionSuggestion) =>
     s.slots.some((slot) => slot.chosen.colorVariant && slot.chosen.function === 'T')
+  // Progressions from the other weirdness levels must also respect this
+  // level's reach and colour budget
   const keepForWeirdness = (s: ProgressionSuggestion) =>
-    weirdness >= SAFE_TONIC_WEIRDNESS || !hasColorVariantTonic(s)
+    (weirdness >= SAFE_TONIC_WEIRDNESS || !hasColorVariantTonic(s)) &&
+    s.slots.every((slot) => isWithinReach(slot.chosen, weirdness)) &&
+    s.slots.filter((slot) => isColorChord(slot.chosen)).length <=
+      colorBudget(weirdness, s.slots.length)
 
   const uniqueStandard = deduplicateProgressions(standardProgressions.filter(keepForWeirdness))
   const uniqueDiatonic = deduplicateProgressions(diatonicProgressions.filter(keepForWeirdness))
@@ -933,25 +982,42 @@ export function generateProgressions(
   const result: ProgressionSuggestion[] = []
   const finalSeen = new Set<string>()
 
-  // Take top 10 from standard
-  for (const s of uniqueStandard.slice(0, 10)) {
+  // Variety: each colour chord (and colour-variant tonics as a group) may
+  // appear in at most MAX_PROGRESSIONS_PER_COLOR_CHORD progressions, so one
+  // well-fitting colour chord can't take over the whole list
+  const colorUsage = new Map<string, number>()
+  const tonicChroma = Note.chroma(tonic)
+  const colorKeys = (s: ProgressionSuggestion) =>
+    new Set(
+      s.slots
+        .map((slot) => slot.chosen)
+        .filter(isColorChord)
+        .map((c) => (isColorVariantTonic(c, tonicChroma) ? 'colour-tonic' : c.symbol))
+    )
+  // The relaxed check still caps colour-variant tonics
+  const fitsVariety = (s: ProgressionSuggestion, relaxed: boolean) =>
+    [...colorKeys(s)].every(
+      (k) =>
+        (relaxed && k !== 'colour-tonic') ||
+        (colorUsage.get(k) ?? 0) < MAX_PROGRESSIONS_PER_COLOR_CHORD
+    )
+  const tryAdd = (s: ProgressionSuggestion, relaxed = false): boolean => {
     const key = progressionKey(s)
-    if (!finalSeen.has(key)) {
-      finalSeen.add(key)
-      result.push(s)
-    }
+    if (finalSeen.has(key) || !fitsVariety(s, relaxed)) return false
+    finalSeen.add(key)
+    result.push(s)
+    for (const k of colorKeys(s)) colorUsage.set(k, (colorUsage.get(k) ?? 0) + 1)
+    return true
   }
+
+  // Take top 10 from standard
+  for (const s of uniqueStandard.slice(0, 10)) tryAdd(s)
 
   // Add up to 5 diatonic progressions (that aren't duplicates)
   let diatonicAdded = 0
   for (const s of uniqueDiatonic) {
     if (diatonicAdded >= 5) break
-    const key = progressionKey(s)
-    if (!finalSeen.has(key)) {
-      finalSeen.add(key)
-      result.push(s)
-      diatonicAdded++
-    }
+    if (tryAdd(s)) diatonicAdded++
   }
 
   // At higher weirdness, keep a couple of applied-chord progressions (V/x,
@@ -961,31 +1027,25 @@ export function generateProgressions(
     for (const s of uniqueStandard) {
       if (secondaryAdded >= 2) break
       if (!s.containsSecondaryDominant) continue
-      const key = progressionKey(s)
-      if (finalSeen.has(key)) {
-        secondaryAdded++
-        continue
-      }
-      finalSeen.add(key)
-      result.push(s)
-      secondaryAdded++
+      if (finalSeen.has(progressionKey(s)) || tryAdd(s)) secondaryAdded++
     }
   }
 
-  // Fill remaining slots from standard if we have room
-  for (const s of uniqueStandard.slice(10)) {
-    if (result.length >= 15) break
-    const key = progressionKey(s)
-    if (!finalSeen.has(key)) {
-      finalSeen.add(key)
-      result.push(s)
-    }
+  // Fill remaining slots from standard (and diatonic) if we have room
+  for (const s of [...uniqueStandard, ...uniqueDiatonic]) {
+    if (result.length >= MAX_PROGRESSIONS) break
+    tryAdd(s)
+  }
+  // Too few left after the variety cap: relax it rather than show a short list
+  for (const s of [...uniqueStandard, ...uniqueDiatonic]) {
+    if (result.length >= MIN_PROGRESSIONS) break
+    tryAdd(s, true)
   }
 
   // Final sort by score
   result.sort((a, b) => b.score - a.score)
 
-  return result.slice(0, 15)
+  return result.slice(0, MAX_PROGRESSIONS)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

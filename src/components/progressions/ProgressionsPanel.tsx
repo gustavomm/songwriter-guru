@@ -2,22 +2,35 @@ import { useState, useCallback, useRef, useEffect, useMemo } from 'react'
 import { useAppState } from '../../domain/state'
 import { midiPlayer } from '../../services/midiPlayer'
 import { generateProgressions } from '../../services/progressionService'
+import { canHarmonize, harmonizeRiff } from '../../services/riffHarmonizer'
 import { getChordTones } from '../../services/chordUtils'
 import { ChartIcon } from '../icons'
 import { WeirdnessKnob } from '../ui/WeirdnessKnob'
 import { ProgressionCard } from './ProgressionCard'
+import { RiffHarmonySection } from './RiffHarmonySection'
 import type { ProgressionSuggestion } from '../../domain/types'
 
 const DEFAULT_WEIRDNESS = 0.5
 
 export function ProgressionsPanel() {
-  const { status, progressions: stateProgressions, harmony, chords, features } = useAppState()
+  const {
+    status,
+    progressions: stateProgressions,
+    harmony,
+    chords,
+    features,
+    transcription,
+  } = useAppState()
   const [playingIndex, setPlayingIndex] = useState<number | null>(null)
+  // Riff harmonization option being played (separate from template playback)
+  const [harmonyPlayingIndex, setHarmonyPlayingIndex] = useState<number | null>(null)
   const [currentChordIndex, setCurrentChordIndex] = useState(0)
+  const [playWithRiff, setPlayWithRiff] = useState(true)
   const playbackRef = useRef<{ timeoutIds: number[] }>({ timeoutIds: [] })
 
-  // Weirdness knob state
+  // Weirdness knob state (committed = value at the last knob release)
   const [weirdness, setWeirdness] = useState(DEFAULT_WEIRDNESS)
+  const [committedWeirdness, setCommittedWeirdness] = useState(DEFAULT_WEIRDNESS)
   const [localProgressions, setLocalProgressions] = useState<ProgressionSuggestion[] | null>(null)
   const [isRegenerating, setIsRegenerating] = useState(false)
 
@@ -40,6 +53,7 @@ export function ProgressionsPanel() {
     (newWeirdness: number) => {
       if (!selectedCandidate || !chords || !features) return
 
+      setCommittedWeirdness(newWeirdness)
       setIsRegenerating(true)
       // Use setTimeout to allow UI to update before heavy computation
       setTimeout(() => {
@@ -74,6 +88,20 @@ export function ProgressionsPanel() {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- only react to new state progressions
   }, [stateProgressions])
 
+  // Bar-by-bar harmonization of the riff itself (cheap: recomputed per key/knob release)
+  const harmonization = useMemo(
+    () =>
+      selectedCandidate && chords && features && canHarmonize(features)
+        ? harmonizeRiff(selectedCandidate, chords, features, committedWeirdness)
+        : null,
+    [selectedCandidate, chords, features, committedWeirdness]
+  )
+
+  const clearPlayback = useCallback(() => {
+    playbackRef.current.timeoutIds.forEach((id) => clearTimeout(id))
+    playbackRef.current.timeoutIds = []
+  }, [])
+
   // Play a progression as a sequence of chords
   const handlePlay = useCallback(
     (index: number) => {
@@ -83,8 +111,8 @@ export function ProgressionsPanel() {
       if (!progression) return
 
       // Clear any existing playback
-      playbackRef.current.timeoutIds.forEach((id) => clearTimeout(id))
-      playbackRef.current.timeoutIds = []
+      clearPlayback()
+      setHarmonyPlayingIndex(null)
 
       setPlayingIndex(index)
       setCurrentChordIndex(0)
@@ -113,16 +141,72 @@ export function ProgressionsPanel() {
       }, totalDuration)
       playbackRef.current.timeoutIds.push(endTimeout)
     },
-    [progressions]
+    [progressions, clearPlayback]
+  )
+
+  // Play a riff harmonization in time: each chord at its bar's start for the
+  // bar's length, optionally with the transcribed riff on top
+  const handlePlayHarmony = useCallback(
+    (index: number) => {
+      const option = harmonization?.options[index]
+      if (!option || option.chords.length === 0) return
+
+      clearPlayback()
+      setPlayingIndex(null)
+      setHarmonyPlayingIndex(index)
+      setCurrentChordIndex(0)
+
+      const riffNotes = playWithRiff ? (transcription?.notes ?? []) : []
+      const origin = Math.min(option.chords[0].startSec, ...riffNotes.map((n) => n.startSec))
+      const schedule = (atSec: number, fn: () => void) => {
+        const delay = Math.max(0, (atSec - origin) * 1000)
+        playbackRef.current.timeoutIds.push(window.setTimeout(fn, delay))
+      }
+
+      option.chords.forEach((harmonized, i) => {
+        const durationMs = Math.max(200, (harmonized.endSec - harmonized.startSec) * 1000 * 0.95)
+        schedule(harmonized.startSec, () => {
+          setCurrentChordIndex(i)
+          midiPlayer.playChord(
+            harmonized.chord.chordTones,
+            3,
+            durationMs,
+            playWithRiff ? 0.28 : 0.35
+          )
+        })
+      })
+      for (const note of riffNotes) {
+        const durationMs = Math.max(120, (note.endSec - note.startSec) * 1000)
+        schedule(note.startSec, () =>
+          midiPlayer.playNote(note.midi, durationMs, (note.velocity ?? 0.6) * 0.8)
+        )
+      }
+
+      const end = Math.max(
+        option.chords[option.chords.length - 1].endSec,
+        ...riffNotes.map((n) => n.endSec)
+      )
+      schedule(end, () => {
+        setHarmonyPlayingIndex(null)
+        setCurrentChordIndex(0)
+      })
+    },
+    [harmonization, playWithRiff, transcription, clearPlayback]
   )
 
   // Stop playback
   const handleStop = useCallback(() => {
-    playbackRef.current.timeoutIds.forEach((id) => clearTimeout(id))
-    playbackRef.current.timeoutIds = []
+    clearPlayback()
     setPlayingIndex(null)
+    setHarmonyPlayingIndex(null)
     setCurrentChordIndex(0)
-  }, [])
+  }, [clearPlayback])
+
+  // Stop playing when the harmonization changes or the panel unmounts
+  useEffect(() => {
+    handleStop()
+  }, [harmonization, handleStop])
+  useEffect(() => clearPlayback, [clearPlayback])
 
   return (
     <div className="rounded-2xl border border-stone-800 bg-gradient-to-b from-stone-900 to-stone-900/50 p-5 shadow-xl shadow-black/20">
@@ -155,20 +239,36 @@ export function ProgressionsPanel() {
           <div className="h-6 w-6 animate-spin rounded-full border-2 border-stone-600 border-t-emerald-500" />
         </div>
       ) : hasResults ? (
-        <div
-          className={`space-y-3 transition-opacity duration-200 ${isRegenerating ? 'opacity-50' : ''}`}
-        >
-          {progressions.map((progression, i) => (
-            <ProgressionCard
-              key={`${progression.chords.join('-')}-${i}`}
-              progression={progression}
-              rank={i + 1}
-              isPlaying={playingIndex === i}
-              currentChordIndex={playingIndex === i ? currentChordIndex : -1}
-              onPlay={() => handlePlay(i)}
-              onStop={handleStop}
-            />
-          ))}
+        <div className={`transition-opacity duration-200 ${isRegenerating ? 'opacity-50' : ''}`}>
+          {harmonization && harmonization.options.length > 0 && (
+            <>
+              <RiffHarmonySection
+                result={harmonization}
+                playingIndex={harmonyPlayingIndex}
+                currentChordIndex={currentChordIndex}
+                withRiff={playWithRiff}
+                onToggleRiff={() => setPlayWithRiff((on) => !on)}
+                onPlay={handlePlayHarmony}
+                onStop={handleStop}
+              />
+              <h3 className="mb-3 text-xs font-semibold uppercase tracking-wider text-stone-500">
+                Progression ideas from templates
+              </h3>
+            </>
+          )}
+          <div className="space-y-3">
+            {progressions.map((progression, i) => (
+              <ProgressionCard
+                key={`${progression.chords.join('-')}-${i}`}
+                progression={progression}
+                rank={i + 1}
+                isPlaying={playingIndex === i}
+                currentChordIndex={playingIndex === i ? currentChordIndex : -1}
+                onPlay={() => handlePlay(i)}
+                onStop={handleStop}
+              />
+            ))}
+          </div>
         </div>
       ) : (
         <div className="flex min-h-[120px] flex-col items-center justify-center rounded-xl border border-dashed border-stone-700/50 bg-stone-950/30 p-6">

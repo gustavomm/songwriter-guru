@@ -487,6 +487,92 @@ function mergeChordDuplicates(chords: ChordSuggestion[]): ChordSuggestion[] {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Colour distance (how far a chord is from the plain key)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Base colour distance by kind of chord, before counting its notes outside
+ * the key: colour variant < secondary dominant < borrowed < parallel tonic <
+ * tritone sub / Neapolitan.
+ */
+const COLOR_BASE = {
+  colorVariant: 0.3,
+  secondary: 0.3,
+  secondaryOther: 0.35,
+  borrowed: 0.35,
+  parallelTonic: 0.6,
+  neapolitan: 0.7,
+  substitute: 0.7,
+} as const
+/** Added colour distance per chord tone outside the key */
+const COLOR_PER_CHROMATIC_NOTE = 0.15
+
+/**
+ * Pitch classes that count as "in the key": the scale, plus the leading tone
+ * in minor (harmonic minor's V and vii° are everyday minor-key chords).
+ */
+function keyPitchClasses(tonic: string, modeName: string): Set<number> {
+  const scale = Scale.get(`${tonic} ${modeName === 'minor' ? 'minor' : 'major'}`)
+  const pcs = new Set(
+    scale.notes.map((n) => Note.chroma(n)).filter((pc): pc is number => pc !== undefined)
+  )
+  const tonicPc = Note.chroma(tonic)
+  if (modeName === 'minor' && tonicPc !== undefined) pcs.add((tonicPc + 11) % 12)
+  return pcs
+}
+
+/**
+ * Colour distance of a chord from the key (0 = plain diatonic): a base by
+ * the kind of chord (see COLOR_BASE) plus COLOR_PER_CHROMATIC_NOTE for each
+ * chord tone outside the key. A chord with several sources takes the
+ * closest one (E7 in A minor is diatonic, not a secondary dominant).
+ */
+export function chordColorDistance(
+  chord: ChordSuggestion,
+  tonic: string,
+  modeName: string
+): number {
+  const keyPcs = keyPitchClasses(tonic, modeName)
+  const chordPcs = chord.chordTones
+    .map((n) => Note.chroma(n))
+    .filter((pc): pc is number => pc !== undefined)
+  const chromatic = new Set(chordPcs.filter((pc) => !keyPcs.has(pc))).size
+
+  const sources = new Set<ChordSource>([chord.source, ...(chord.sources ?? [])])
+  const rootPc = chordPcs[0]
+  const tonicPc = Note.chroma(tonic) ?? 0
+  const rootDistance = rootPc === undefined ? -1 : (rootPc - tonicPc + 12) % 12
+
+  let base: number
+  if (sources.has('diatonic')) {
+    base = chord.colorVariant ? COLOR_BASE.colorVariant : 0
+  } else if (sources.has('secondary_dominant')) {
+    base = COLOR_BASE.secondary
+  } else if (sources.has('secondary_leading_tone') || sources.has('secondary_supertonic')) {
+    base = COLOR_BASE.secondaryOther
+  } else if (sources.has('borrowed')) {
+    base =
+      rootDistance === 1
+        ? COLOR_BASE.neapolitan
+        : rootDistance === 0
+          ? COLOR_BASE.parallelTonic
+          : COLOR_BASE.borrowed
+  } else {
+    base = COLOR_BASE.substitute
+  }
+  if (base === 0 && chromatic === 0) return 0
+  return Math.round((base + COLOR_PER_CHROMATIC_NOTE * chromatic) * 100) / 100
+}
+
+function withColorDistance(
+  chord: ChordSuggestion,
+  tonic: string,
+  modeName: string
+): ChordSuggestion {
+  return { ...chord, colorDistance: chordColorDistance(chord, tonic, modeName) }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Main Export
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -517,13 +603,16 @@ export function generateChordSuggestions(
 
   // Sort each category by supportScore (best-fitting chords first)
   const sortBySupport = (a: ChordSuggestion, b: ChordSuggestion) => b.supportScore - a.supportScore
-  const sortedDiatonic = [...diatonicChords].sort(sortBySupport)
-  const sortedSecondary = [...secondaryChords].sort(sortBySupport)
-  const sortedBorrowed = [...borrowedChords].sort(sortBySupport)
+  const annotate = (c: ChordSuggestion) => withColorDistance(c, tonic, tonalModeName)
+  const sortedDiatonic = diatonicChords.map(annotate).sort(sortBySupport)
+  const sortedSecondary = secondaryChords.map(annotate).sort(sortBySupport)
+  const sortedBorrowed = borrowedChords.map(annotate).sort(sortBySupport)
 
   // Create ranked list with merged duplicates
   const allChords = [...diatonicChords, ...secondaryChords, ...borrowedChords]
-  const mergedChords = mergeChordDuplicates(allChords)
+  const mergedChords = mergeChordDuplicates(allChords).map((c) =>
+    withColorDistance(c, tonic, tonalModeName)
+  )
   const rankedByColor = [...mergedChords].sort((a, b) => {
     // Primary sort by colorScore, secondary by supportScore
     if (Math.abs(b.colorScore - a.colorScore) > 0.01) {

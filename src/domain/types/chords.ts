@@ -32,6 +32,14 @@ export interface ChordSuggestion {
    */
   colorVariant?: boolean
 
+  /**
+   * How far the chord is from the plain key (0 = plain diatonic): grows with
+   * the kind of colour (colour variant < secondary dominant < borrowed <
+   * tritone sub / Neapolitan) and its number of notes outside the key.
+   * The weirdness knob decides how far progressions may reach.
+   */
+  colorDistance?: number
+
   // Source classification
   source: ChordSource
   /** Additional sources if chord belongs to multiple categories */
