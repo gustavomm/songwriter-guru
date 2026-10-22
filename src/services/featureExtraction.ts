@@ -1,4 +1,5 @@
 import type { TranscribedNote, RiffFeatures, PitchClassWeights } from '../domain/types'
+import { segmentRiff } from './riffSegmentation'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Feature Extraction: TranscribedNote[] → RiffFeatures
@@ -75,6 +76,7 @@ export function extractFeatures(notes: TranscribedNote[]): RiffFeatures {
     firstNotePc,
     bassPc,
     bassStrength,
+    segmentation: segmentRiff(notes),
   }
 }
 

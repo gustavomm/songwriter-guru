@@ -7,7 +7,14 @@ export type {
 
 export type { TranscribedNote, TranscriptionResult, TranscriptionPreset } from './transcription'
 
-export type { PitchClassWeights, RiffFeatures } from './features'
+export type {
+  PitchClassWeights,
+  RiffFeatures,
+  RiffTiming,
+  RiffSegment,
+  RiffBar,
+  RiffSegmentation,
+} from './features'
 
 export type { HarmonicFieldCandidate, HarmonyAnalysisResult } from './harmony'
 
@@ -19,4 +26,10 @@ export type {
   FocusedChord,
 } from './chords'
 
-export type { ProgressionSlot, ProgressionSuggestion } from './progressions'
+export type {
+  ProgressionSlot,
+  ProgressionSuggestion,
+  HarmonizedChord,
+  RiffHarmonization,
+  HarmonizationResult,
+} from './progressions'
