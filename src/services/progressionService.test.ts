@@ -812,3 +812,77 @@ describe('progressionService', () => {
     }
   })
 })
+
+describe('weirdness knob on template progressions', () => {
+  const buildRiff = (midis: number[]): TranscribedNote[] =>
+    midis.map((midi, i) => ({ startSec: i * 0.5, endSec: i * 0.5 + 0.45, midi, velocity: 0.8 }))
+  const fieldFor = (tonic: string, mode: string): HarmonicFieldCandidate => ({
+    id: `${tonic}-${mode.toLowerCase()}`,
+    tonic,
+    mode,
+    scaleNotes: Scale.get(`${tonic} ${mode.toLowerCase()}`).notes,
+    fitScore: 1,
+    outOfScale: [],
+  })
+  const RIFFS: [HarmonicFieldCandidate, number[]][] = [
+    // Harmonic minor riff leaning on G#: i(maj7) fits it well on paper
+    [fieldFor('A', 'Minor'), [57, 60, 64, 62, 60, 59, 56, 57, 64, 65, 64, 57]],
+    [fieldFor('E', 'Minor'), [64, 66, 67, 69, 71, 72, 74, 76, 71, 67, 64]],
+    [fieldFor('C', 'Major'), [60, 62, 64, 65, 67, 69, 71, 72, 67, 64, 60]],
+  ]
+  const STEPS = [0, 0.25, 0.5, 0.75, 1]
+  const isColorTonic = (c: ChordSuggestion, tonic: string) =>
+    !!c.colorVariant && Note.chroma(Chord.get(c.id).tonic ?? '') === Note.chroma(tonic)
+
+  it('uses a colour-variant tonic at most once per progression, never last, in few progressions', () => {
+    for (const [field, midis] of RIFFS) {
+      const features = extractFeatures(buildRiff(midis))
+      const chords = generateChordSuggestions(field, features)
+      for (const w of STEPS) {
+        const progressions = generateProgressions(field, chords, features, w)
+        let withColorTonic = 0
+        for (const p of progressions) {
+          const chosen = p.slots.map((s) => s.chosen)
+          const count = chosen.filter((c) => isColorTonic(c, field.tonic)).length
+          expect(count, p.chords.join(' ')).toBeLessThanOrEqual(1)
+          expect(isColorTonic(chosen[chosen.length - 1], field.tonic), p.chords.join(' ')).toBe(
+            false
+          )
+          if (count > 0) withColorTonic++
+        }
+        expect(withColorTonic, `${field.id} w=${w}`).toBeLessThanOrEqual(3)
+      }
+    }
+  })
+
+  it('adds colour smoothly: none at 0, non-decreasing on average up to 1', () => {
+    for (const [field, midis] of RIFFS) {
+      const features = extractFeatures(buildRiff(midis))
+      const chords = generateChordSuggestions(field, features)
+      const means = STEPS.map((w) => {
+        const progressions = generateProgressions(field, chords, features, w)
+        const colour = progressions.map(
+          (p) => p.slots.filter((s) => (s.chosen.colorDistance ?? 0) > 0).length
+        )
+        return colour.reduce((a, b) => a + b, 0) / progressions.length
+      })
+      expect(means[0]).toBe(0)
+      for (let i = 1; i < means.length; i++) {
+        expect(means[i], `${field.id}: ${means.join(', ')}`).toBeGreaterThanOrEqual(means[i - 1])
+      }
+      expect(means[means.length - 1]).toBeGreaterThan(0)
+    }
+  })
+
+  it('keeps every chord within the weirdness reach', () => {
+    const [field, midis] = RIFFS[2]
+    const features = extractFeatures(buildRiff(midis))
+    const chords = generateChordSuggestions(field, features)
+    // At 0.5 the reach stops short of tritone subs and the Neapolitan
+    for (const p of generateProgressions(field, chords, features, 0.5)) {
+      for (const slot of p.slots) {
+        expect(slot.chosen.colorDistance ?? 0, p.chords.join(' ')).toBeLessThanOrEqual(0.625)
+      }
+    }
+  })
+})
