@@ -1,4 +1,6 @@
-import { memo } from 'react'
+import { memo, useMemo } from 'react'
+import { findVoicings } from '../../services/chordVoicings'
+import { ChordDiagram } from '../fretboard/ChordDiagram'
 import { PlayIcon } from '../icons'
 import type { ChordSuggestion, ChordSource } from '../../domain/types'
 
@@ -25,90 +27,131 @@ const sourceLabels: Record<ChordSource, string> = {
 interface ChordCardProps {
   chord: ChordSuggestion
   isPlaying: boolean
+  /** Shown on the fretboard */
+  isFocused?: boolean
   onPlay: () => void
 }
 
-export const ChordCard = memo(function ChordCard({ chord, isPlaying, onPlay }: ChordCardProps) {
+export const ChordCard = memo(function ChordCard({
+  chord,
+  isPlaying,
+  isFocused = false,
+  onPlay,
+}: ChordCardProps) {
+  // The easiest shape to play, so the card shows a chord box rather than a list of notes
+  const voicing = useMemo(() => findVoicings(chord.chordTones, { limit: 1 })[0], [chord.chordTones])
+  const details = (chord.sourceDetails ?? (chord.sourceDetail ? [chord.sourceDetail] : []))
+    .filter(Boolean)
+    .join(' • ')
+
   return (
     <div
-      className={`group rounded-xl border p-3 transition-all ${
+      onClick={onPlay}
+      className={`group flex cursor-pointer gap-3 rounded-xl border p-3 transition-all ${
         isPlaying
           ? 'border-amber-500/50 bg-amber-500/10 ring-1 ring-amber-500/30'
-          : 'border-stone-700/50 bg-stone-950/30 hover:border-stone-600 hover:bg-stone-900/50'
+          : isFocused
+            ? 'border-rose-400/50 bg-rose-500/5 ring-1 ring-rose-400/30'
+            : 'border-stone-700/50 bg-stone-950/30 hover:border-stone-600 hover:bg-stone-900/50'
       }`}
     >
-      <div className="mb-2 flex flex-wrap items-start justify-between gap-2">
-        <div className="flex items-center gap-2">
-          {/* Play button */}
-          <button
-            onClick={onPlay}
-            className={`flex h-7 w-7 shrink-0 cursor-pointer items-center justify-center rounded-full transition-all ${
-              isPlaying
-                ? 'bg-amber-500/30 text-amber-400'
-                : 'bg-stone-800/80 text-stone-400 hover:bg-stone-700/80 hover:text-stone-300'
-            }`}
-            title="Play chord"
-          >
-            <PlayIcon className="h-3 w-3" />
-          </button>
+      {/* Chord box doubles as the play button */}
+      <button
+        onClick={(e) => {
+          e.stopPropagation()
+          onPlay()
+        }}
+        className="relative w-[76px] shrink-0 cursor-pointer self-start rounded-lg bg-stone-950/50 p-1.5"
+        aria-label={`Play ${chord.symbol} and show it on the fretboard`}
+      >
+        {voicing ? (
+          <ChordDiagram voicing={voicing} chordTones={chord.chordTones} className="h-auto w-full" />
+        ) : (
+          <span className="flex aspect-square items-center justify-center text-center text-[11px] text-stone-400">
+            {chord.chordTones.join(' ')}
+          </span>
+        )}
+        <span
+          className={`absolute -right-1.5 -bottom-1.5 flex h-6 w-6 items-center justify-center rounded-full shadow ${
+            isPlaying
+              ? 'bg-amber-500 text-stone-950'
+              : 'bg-stone-700 text-stone-200 group-hover:bg-stone-600'
+          }`}
+        >
+          <PlayIcon className="h-2.5 w-2.5" />
+        </span>
+      </button>
+
+      <div className="min-w-0 flex-1">
+        <div className="flex flex-wrap items-start justify-between gap-x-2 gap-y-1">
           <div className="min-w-0">
             <span className="text-lg font-bold text-stone-100">{chord.symbol}</span>
             {chord.roman && <span className="ml-2 text-sm text-stone-500">{chord.roman}</span>}
           </div>
+          {/* Source labels - show all if chord has multiple sources */}
+          <div className="flex flex-wrap gap-1">
+            {(chord.sources || [chord.source]).map((src, i) => (
+              <span
+                key={i}
+                className={`rounded-full border px-2 py-0.5 text-xs font-medium whitespace-nowrap ${sourceColors[src]}`}
+              >
+                {sourceLabels[src]}
+              </span>
+            ))}
+          </div>
         </div>
-        {/* Source labels - show all if chord has multiple sources */}
-        <div className="flex flex-wrap gap-1">
-          {(chord.sources || [chord.source]).map((src, i) => (
-            <span
-              key={i}
-              className={`rounded-full border px-2 py-0.5 text-xs font-medium whitespace-nowrap ${sourceColors[src]}`}
-            >
-              {sourceLabels[src]}
+
+        <p className="mt-0.5 text-xs text-stone-400">
+          {chord.chordTones.join(' · ')}
+          {voicing && (
+            <span className="text-stone-600">
+              {' '}
+              — {voicing.label === 'Open' ? 'open chord' : voicing.label}
             </span>
-          ))}
-        </div>
-      </div>
-
-      <div className="mb-2 flex flex-wrap gap-1">
-        {chord.chordTones.map((tone, i) => (
-          <span key={i} className="rounded bg-stone-700/50 px-1.5 py-0.5 text-xs text-stone-400">
-            {tone}
-          </span>
-        ))}
-      </div>
-
-      {(chord.sourceDetails || (chord.sourceDetail ? [chord.sourceDetail] : [])).length > 0 && (
-        <p className="mb-2 text-xs text-stone-500">
-          {(chord.sourceDetails || [chord.sourceDetail]).filter(Boolean).join(' • ')}
+          )}
         </p>
-      )}
+        {details && <p className="mt-1 text-xs text-stone-500">{details}</p>}
 
-      <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs">
-        <div className="flex items-center gap-1.5">
-          <div className="h-1.5 w-10 overflow-hidden rounded-full bg-stone-700">
-            <div
-              className="h-full rounded-full bg-emerald-500"
-              style={{ width: `${chord.supportScore * 100}%` }}
-            />
-          </div>
-          <span className="text-emerald-400/80 font-medium">
-            {Math.round(chord.supportScore * 100)}%
-          </span>
-          <span className="text-stone-500">fit</span>
-        </div>
-        <div className="flex items-center gap-1.5">
-          <div className="h-1.5 w-10 overflow-hidden rounded-full bg-stone-700">
-            <div
-              className="h-full rounded-full bg-violet-500"
-              style={{ width: `${chord.colorScore * 100}%` }}
-            />
-          </div>
-          <span className="text-violet-400/80 font-medium">
-            {Math.round(chord.colorScore * 100)}%
-          </span>
-          <span className="text-stone-500">color</span>
+        <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs">
+          <ScoreBar value={chord.supportScore} label="fit" color="emerald" />
+          <ScoreBar value={chord.colorScore} label="color" color="violet" />
+          {isFocused && (
+            <a
+              href="#fretboard"
+              onClick={(e) => {
+                e.preventDefault()
+                e.stopPropagation()
+                document.getElementById('fretboard')?.scrollIntoView({ behavior: 'smooth' })
+              }}
+              className="ml-auto font-medium text-rose-300 hover:text-rose-200"
+            >
+              More shapes on the neck ↑
+            </a>
+          )}
         </div>
       </div>
     </div>
   )
 })
+
+function ScoreBar({
+  value,
+  label,
+  color,
+}: {
+  value: number
+  label: string
+  color: 'emerald' | 'violet'
+}) {
+  const bar = color === 'emerald' ? 'bg-emerald-500' : 'bg-violet-500'
+  const text = color === 'emerald' ? 'text-emerald-400/80' : 'text-violet-400/80'
+  return (
+    <div className="flex items-center gap-1.5">
+      <div className="h-1.5 w-10 overflow-hidden rounded-full bg-stone-700">
+        <div className={`h-full rounded-full ${bar}`} style={{ width: `${value * 100}%` }} />
+      </div>
+      <span className={`font-medium ${text}`}>{Math.round(value * 100)}%</span>
+      <span className="text-stone-500">{label}</span>
+    </div>
+  )
+}

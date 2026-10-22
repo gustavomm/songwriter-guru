@@ -16,6 +16,7 @@ export type {
   HarmonicFunction,
   ChordSuggestion,
   ChordSuggestionResult,
+  FocusedChord,
 } from './chords'
 
 export type { ProgressionSlot, ProgressionSuggestion } from './progressions'

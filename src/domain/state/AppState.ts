@@ -7,6 +7,7 @@ import type {
   HarmonyAnalysisResult,
   ChordSuggestionResult,
   ProgressionSuggestion,
+  FocusedChord,
 } from '../types'
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -24,6 +25,8 @@ export interface AppState {
   harmony: HarmonyAnalysisResult | null
   chords: ChordSuggestionResult | null
   progressions: ProgressionSuggestion[] | null
+  /** Chord whose tones are highlighted on the fretboard */
+  focusedChord: FocusedChord | null
 }
 
 export const initialAppState: AppState = {
@@ -37,6 +40,7 @@ export const initialAppState: AppState = {
   harmony: null,
   chords: null,
   progressions: null,
+  focusedChord: null,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -67,6 +71,7 @@ export type AppAction =
         progressions: ProgressionSuggestion[]
       }
     }
+  | { type: 'FOCUS_CHORD'; payload: FocusedChord | null }
   | { type: 'SET_ERROR'; payload: RecordingError }
   | { type: 'RESET' }
 
@@ -126,6 +131,13 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         },
         chords: action.payload.chords,
         progressions: action.payload.progressions,
+        focusedChord: null,
+      }
+
+    case 'FOCUS_CHORD':
+      return {
+        ...state,
+        focusedChord: action.payload,
       }
 
     case 'SET_ERROR':

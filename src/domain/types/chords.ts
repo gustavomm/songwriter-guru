@@ -61,3 +61,11 @@ export interface ChordSuggestionResult {
   /** Target roman -> applied chords that resolve to it */
   byResolvesTo: Map<string, ChordSuggestion[]>
 }
+
+/** A chord shown on the fretboard, from the chord list or the fretboard's own chips */
+export interface FocusedChord {
+  symbol: string
+  roman?: string
+  /** Chord tones, root first */
+  chordTones: string[]
+}
