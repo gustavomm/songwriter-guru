@@ -83,7 +83,9 @@ export class PCMCapture {
 
     try {
       // Load the worklet processor
-      await this.audioContext.audioWorklet.addModule('/pcm-capture-processor.js')
+      await this.audioContext.audioWorklet.addModule(
+        `${import.meta.env.BASE_URL}pcm-capture-processor.js`
+      )
 
       // Create source node from the stream
       this.sourceNode = this.audioContext.createMediaStreamSource(stream)

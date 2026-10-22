@@ -232,7 +232,7 @@ function estimateNoiseSpectrum(
  */
 export function spectralNoiseReduction(
   audioData: Float32Array,
-  sampleRate: number,
+  _sampleRate: number,
   precomputedNoiseProfile?: Float32Array
 ): Float32Array {
   const fft = new FFTProcessor(NOISE_FFT_SIZE)
@@ -345,7 +345,7 @@ export function estimateNoiseProfile(
  * Returns true if the signal appears noisy enough to warrant processing.
  * Uses a conservative threshold to avoid processing clean signals.
  */
-export function shouldApplyNoiseReduction(audioData: Float32Array, noiseFloorDb: number): boolean {
+export function shouldApplyNoiseReduction(_audioData: Float32Array, noiseFloorDb: number): boolean {
   // Only apply NR if noise floor is quite high (above -40dB)
   // This avoids processing relatively clean signals
   return noiseFloorDb > -40

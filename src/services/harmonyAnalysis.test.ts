@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { analyzeHarmony, getScaleNotes, getScalePitchClasses } from './harmonyAnalysis'
-import type { RiffFeatures, PitchClassWeights } from '../domain/types'
+import { extractFeatures } from './featureExtraction'
+import type { RiffFeatures, PitchClassWeights, TranscribedNote } from '../domain/types'
 
 describe('harmonyAnalysis', () => {
   // Helper to create pitch class weights
@@ -12,6 +13,19 @@ describe('harmonyAnalysis', () => {
     }
     return pcWeights
   }
+
+  // Helper to build a riff from MIDI numbers: 0.45s notes every 0.5s, velocity 0.8
+  const riffFromMidi = (midis: number[]): TranscribedNote[] =>
+    midis.map((midi, i) => ({
+      midi,
+      startSec: i * 0.5,
+      endSec: i * 0.5 + 0.45,
+      velocity: 0.8,
+    }))
+
+  // Helper to look up a candidate's display data among all returned candidates
+  const findCandidate = (features: RiffFeatures, id: string) =>
+    analyzeHarmony(features).candidates.find((c) => c.id === id)
 
   describe('analyzeHarmony', () => {
     it('ranks C Major highest for C major scale notes', () => {
@@ -42,7 +56,8 @@ describe('harmonyAnalysis', () => {
 
       const result = analyzeHarmony(aMinorFeatures)
 
-      // A Minor should be in top candidates
+      // A Minor should beat its relative major (same notes, different tonic)
+      expect(result.selectedCandidateId).toBe('A-minor')
       const aMinor = result.candidates.find((c) => c.tonic === 'A' && c.mode === 'Minor')
       expect(aMinor).toBeDefined()
       expect(aMinor!.fitScore).toBeGreaterThan(0.8)
@@ -199,6 +214,140 @@ describe('harmonyAnalysis', () => {
         expect(candidate.mode).toBeDefined()
         expect(['Major', 'Minor']).toContain(candidate.mode)
       }
+    })
+  })
+
+  describe('key spelling', () => {
+    it.each([
+      {
+        id: 'Bb-major',
+        midis: [58, 60, 62, 63, 65, 67, 69, 70, 65, 62, 58],
+        scale: ['Bb', 'C', 'D', 'Eb', 'F', 'G', 'A'],
+      },
+      {
+        id: 'Eb-major',
+        midis: [63, 65, 67, 68, 70, 72, 74, 75, 70, 67, 63],
+        scale: ['Eb', 'F', 'G', 'Ab', 'Bb', 'C', 'D'],
+      },
+      {
+        id: 'Ab-major',
+        midis: [68, 70, 72, 73, 75, 77, 79, 80, 75, 72, 68],
+        scale: ['Ab', 'Bb', 'C', 'Db', 'Eb', 'F', 'G'],
+      },
+      {
+        id: 'Bb-minor',
+        midis: [58, 61, 65, 70, 68, 65, 63, 61, 58],
+        scale: ['Bb', 'C', 'Db', 'Eb', 'F', 'Gb', 'Ab'],
+      },
+      {
+        id: 'Eb-minor',
+        midis: [63, 66, 70, 75, 73, 70, 68, 66, 63],
+        scale: ['Eb', 'F', 'Gb', 'Ab', 'Bb', 'Cb', 'Db'],
+      },
+    ])('spells $id with flats', ({ id, midis, scale }) => {
+      const result = analyzeHarmony(extractFeatures(riffFromMidi(midis)))
+
+      expect(result.selectedCandidateId).toBe(id)
+      expect(result.candidates[0].tonic).toBe(id.split('-')[0])
+      expect(result.candidates[0].scaleNotes).toEqual(scale)
+    })
+
+    it('uses conventional tonic spellings and never double accidentals', () => {
+      const majorTonics = ['C', 'Db', 'D', 'Eb', 'E', 'F', 'F#', 'G', 'Ab', 'A', 'Bb', 'B']
+      const minorTonics = ['C', 'C#', 'D', 'Eb', 'E', 'F', 'F#', 'G', 'G#', 'A', 'Bb', 'B']
+
+      // A single pitch class pulls each of the 12 tonics to the top in turn
+      for (let pc = 0; pc < 12; pc++) {
+        const result = analyzeHarmony({
+          pcWeights: createPcWeights({ [pc]: 1 }),
+          topPitchClasses: [pc],
+          lastNotePc: pc,
+          bassPc: pc,
+        })
+
+        for (const candidate of result.candidates) {
+          const tonics = candidate.mode === 'Major' ? majorTonics : minorTonics
+          expect(tonics).toContain(candidate.tonic)
+          expect(candidate.id).toBe(`${candidate.tonic}-${candidate.mode.toLowerCase()}`)
+          for (const note of candidate.scaleNotes) {
+            expect(note).not.toMatch(/##|bb/)
+          }
+        }
+      }
+    })
+
+    it('spells out-of-scale notes using the key (flats in flat keys)', () => {
+      // F major riff with a chromatic Eb (pitch class 3)
+      const features: RiffFeatures = {
+        pcWeights: createPcWeights({ 5: 0.3, 9: 0.2, 0: 0.2, 3: 0.15, 7: 0.15 }),
+        topPitchClasses: [5, 9, 0, 3, 7],
+        lastNotePc: 5,
+        bassPc: 5,
+      }
+
+      const fMajor = findCandidate(features, 'F-major')
+      expect(fMajor).toBeDefined()
+      expect(fMajor!.outOfScale.map((n) => n.note)).toContain('Eb')
+      expect(fMajor!.outOfScale.map((n) => n.note)).not.toContain('D#')
+    })
+
+    it('spells the raised leading tone of a minor key with a sharp', () => {
+      // A harmonic minor riff: A B C D E F G#
+      const features: RiffFeatures = {
+        pcWeights: createPcWeights({ 9: 0.3, 11: 0.1, 0: 0.15, 2: 0.1, 4: 0.15, 5: 0.1, 8: 0.1 }),
+        topPitchClasses: [9, 0, 4, 11, 8],
+        lastNotePc: 9,
+        bassPc: 9,
+      }
+
+      const aMinor = findCandidate(features, 'A-minor')
+      expect(aMinor).toBeDefined()
+      expect(aMinor!.outOfScale).toEqual([{ note: 'G#', weight: 0.1 }])
+    })
+  })
+
+  describe('relative keys', () => {
+    it('ranks C major clearly above A minor for a C major riff', () => {
+      // C D E F G A B C G E C
+      const features = extractFeatures(riffFromMidi([60, 62, 64, 65, 67, 69, 71, 72, 67, 64, 60]))
+      const result = analyzeHarmony(features)
+
+      expect(result.selectedCandidateId).toBe('C-major')
+      const cMajor = result.candidates.find((c) => c.id === 'C-major')!
+      const aMinor = result.candidates.find((c) => c.id === 'A-minor')!
+      expect(aMinor).toBeDefined()
+      expect(cMajor.fitScore - aMinor.fitScore).toBeGreaterThan(0.05)
+    })
+
+    it('ranks A minor clearly above C major for an A minor riff', () => {
+      // A C E A G E D C A — weighted on A and E, ending on A
+      const features = extractFeatures(riffFromMidi([57, 60, 64, 69, 67, 64, 62, 60, 57]))
+      const result = analyzeHarmony(features)
+
+      expect(result.selectedCandidateId).toBe('A-minor')
+      const aMinor = result.candidates.find((c) => c.id === 'A-minor')!
+      const cMajor = result.candidates.find((c) => c.id === 'C-major')!
+      expect(cMajor).toBeDefined()
+      expect(aMinor.fitScore - cMajor.fitScore).toBeGreaterThan(0.05)
+    })
+
+    it('keeps display scores within 0-1 without collapsing ties at 1.0', () => {
+      // Every note in C major / A minor, with endings and bass on C
+      const features: RiffFeatures = {
+        pcWeights: createPcWeights({ 0: 0.4, 4: 0.3, 7: 0.3 }),
+        topPitchClasses: [0, 4, 7],
+        lastNotePc: 0,
+        bassPc: 0,
+      }
+
+      const result = analyzeHarmony(features)
+
+      for (const candidate of result.candidates) {
+        expect(candidate.fitScore).toBeGreaterThanOrEqual(0)
+        expect(candidate.fitScore).toBeLessThanOrEqual(1)
+      }
+      const scores = result.candidates.map((c) => c.fitScore)
+      expect(scores[0]).toBeGreaterThan(scores[1])
     })
   })
 

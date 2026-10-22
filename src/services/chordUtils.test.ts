@@ -98,8 +98,19 @@ describe('chordUtils', () => {
       expect(getChordTones('Dsus4')).toEqual(['D', 'G', 'A'])
     })
 
-    it('handles flats (normalized to sharps)', () => {
-      expect(getChordTones('Bb')).toEqual(['A#', 'D', 'F'])
+    it('keeps flat spelling', () => {
+      expect(getChordTones('Bb')).toEqual(['Bb', 'D', 'F'])
+    })
+
+    it('parses display symbols used in the UI', () => {
+      expect(getChordTones('B°7')).toEqual(['B', 'D', 'F', 'Ab'])
+      expect(getChordTones('Bø7')).toEqual(['B', 'D', 'F', 'A'])
+      expect(getChordTones('B°')).toEqual(['B', 'D', 'F'])
+      expect(getChordTones('Em6')).toEqual(['E', 'G', 'B', 'C#'])
+      expect(getChordTones('CmM7')).toEqual(['C', 'Eb', 'G', 'B'])
+      expect(getChordTones('C+7')).toEqual(['C', 'E', 'G#', 'Bb'])
+      expect(getChordTones('C+')).toEqual(['C', 'E', 'G#'])
+      expect(getChordTones('F##')).toEqual(['F##', 'A##', 'C##'])
     })
 
     it('returns fallback C major for invalid input', () => {

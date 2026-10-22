@@ -155,6 +155,7 @@ export function RecorderCard() {
       dispatch({
         type: 'ANALYSIS_COMPLETE',
         payload: {
+          recording: recordingAsset,
           transcription: transcriptionResult,
           features,
           harmony,

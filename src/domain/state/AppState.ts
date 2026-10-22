@@ -46,13 +46,12 @@ export const initialAppState: AppState = {
 export type AppAction =
   | { type: 'START_RECORDING' }
   | { type: 'STOP_RECORDING'; payload: RecordingAsset }
-  | { type: 'START_DECODE' }
   | { type: 'START_TRANSCRIBE' }
   | { type: 'SET_TRANSCRIPTION_PROGRESS'; payload: { percent: number; message?: string } }
-  | { type: 'TRANSCRIPTION_COMPLETE'; payload: TranscriptionResult }
   | {
       type: 'ANALYSIS_COMPLETE'
       payload: {
+        recording: RecordingAsset
         transcription: TranscriptionResult
         features: RiffFeatures
         harmony: HarmonyAnalysisResult
@@ -90,12 +89,6 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         recording: action.payload,
       }
 
-    case 'START_DECODE':
-      return {
-        ...state,
-        status: 'decoding',
-      }
-
     case 'START_TRANSCRIBE':
       return {
         ...state,
@@ -111,19 +104,11 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         transcriptionMessage: action.payload.message ?? state.transcriptionMessage,
       }
 
-    case 'TRANSCRIPTION_COMPLETE':
-      return {
-        ...state,
-        status: 'analyzed',
-        transcription: action.payload,
-        transcriptionProgress: 100,
-        transcriptionMessage: 'Complete',
-      }
-
     case 'ANALYSIS_COMPLETE':
       return {
         ...state,
         status: 'analyzed',
+        recording: action.payload.recording,
         transcription: action.payload.transcription,
         features: action.payload.features,
         harmony: action.payload.harmony,

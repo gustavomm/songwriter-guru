@@ -1,5 +1,11 @@
 import { describe, it, expect } from 'vitest'
-import { calculateScores, formatChordSymbol, generateChordSuggestions } from './chordSuggestion'
+import {
+  calculateScores,
+  formatChordSymbol,
+  generateChordSuggestions,
+  romanForChord,
+} from './chordSuggestion'
+import { Chord } from 'tonal'
 import type { PitchClassWeights, HarmonicFieldCandidate, RiffFeatures } from '../domain/types'
 
 describe('chordSuggestion', () => {
@@ -266,6 +272,181 @@ describe('chordSuggestion', () => {
       // Should include Am as tonic
       const diatonicSymbols = result.diatonic.map((c) => c.symbol)
       expect(diatonicSymbols).toContain('Am')
+    })
+  })
+  describe('romanForChord', () => {
+    const roman = (degree: string, symbol: string) =>
+      romanForChord(degree, Chord.get(symbol).intervals)
+
+    it('labels triads by quality', () => {
+      expect(roman('I', 'C')).toBe('I')
+      expect(roman('vi', 'Am')).toBe('vi')
+      expect(roman('vii°', 'Bdim')).toBe('vii°')
+      expect(roman('III+', 'Caug')).toBe('III+')
+      expect(roman('bVII', 'Bb')).toBe('bVII')
+    })
+
+    it('labels seventh and sixth chords by quality', () => {
+      expect(roman('i', 'Em6')).toBe('i6')
+      expect(roman('i', 'AmMaj7')).toBe('i(maj7)')
+      expect(roman('ii°', 'Bm7b5')).toBe('iiø7')
+      expect(roman('vii°', 'G#o7')).toBe('vii°7')
+      expect(roman('V', 'G7')).toBe('V7')
+      expect(roman('IV', 'Fmaj7')).toBe('IVmaj7')
+      expect(roman('ii', 'Dm7')).toBe('ii7')
+      expect(roman('III+', 'C+maj7')).toBe('III+maj7')
+      expect(roman('bVI', 'Abmaj7')).toBe('bVImaj7')
+    })
+  })
+
+  describe('roman numerals for diatonic chords', () => {
+    const features: RiffFeatures = {
+      pcWeights: [0.2, 0, 0.1, 0, 0.2, 0.1, 0, 0.2, 0, 0.2, 0, 0],
+      topPitchClasses: [0, 4, 7, 9],
+    }
+
+    const field = (tonic: string, mode: string): HarmonicFieldCandidate => ({
+      id: `${tonic}-${mode.toLowerCase()}`,
+      tonic,
+      mode,
+      scaleNotes: [],
+      fitScore: 0.9,
+      outOfScale: [],
+    })
+
+    const romanOf = (tonic: string, mode: string) => {
+      const result = generateChordSuggestions(field(tonic, mode), features)
+      return new Map(result.diatonic.map((c) => [c.symbol, c.roman]))
+    }
+
+    it('labels major key 7th chords by quality', () => {
+      const romans = romanOf('C', 'Major')
+      expect(romans.get('Cmaj7')).toBe('Imaj7')
+      expect(romans.get('Dm7')).toBe('ii7')
+      expect(romans.get('Fmaj7')).toBe('IVmaj7')
+      expect(romans.get('G7')).toBe('V7')
+      expect(romans.get('Bø7')).toBe('viiø7')
+    })
+
+    it('labels natural minor 7th chords by quality', () => {
+      const romans = romanOf('A', 'Minor')
+      expect(romans.get('Am7')).toBe('i7')
+      expect(romans.get('Bø7')).toBe('iiø7')
+      expect(romans.get('Cmaj7')).toBe('IIImaj7')
+      expect(romans.get('G7')).toBe('VII7')
+    })
+
+    it('labels harmonic minor 7th chords by quality', () => {
+      const romans = romanOf('A', 'Minor')
+      expect(romans.get('AmM7')).toBe('i(maj7)')
+      expect(romans.get('C+maj7')).toBe('III+maj7')
+      expect(romans.get('E7')).toBe('V7')
+      expect(romans.get('G#°7')).toBe('vii°7')
+    })
+
+    it('labels melodic minor 7th chords by quality (tonic m6 is i6, not i7)', () => {
+      const romans = romanOf('E', 'Minor')
+      expect(romans.get('Em6')).toBe('i6')
+      expect(romans.get('F#m7')).toBe('ii7')
+      expect(romans.get('A7')).toBe('IV7')
+      expect(romans.get('C#ø7')).toBe('viø7')
+      expect(romans.get('D#ø7')).toBe('viiø7')
+    })
+
+    it('never labels a non-dominant 7th chord with a bare 7', () => {
+      for (const [tonic, mode] of [
+        ['C', 'Major'],
+        ['A', 'Minor'],
+        ['Eb', 'Minor'],
+      ]) {
+        const result = generateChordSuggestions(field(tonic, mode), features)
+        for (const chord of [...result.diatonic, ...result.borrowed]) {
+          const quality = Chord.get(chord.id)
+          const isMinorSeventh =
+            quality.intervals.includes('3m') &&
+            quality.intervals.includes('5P') &&
+            quality.intervals.includes('7m')
+          const isDominant =
+            quality.intervals.includes('3M') &&
+            quality.intervals.includes('5P') &&
+            quality.intervals.includes('7m')
+          if (chord.roman && /[IViv]7$/.test(chord.roman)) {
+            expect(isMinorSeventh || isDominant).toBe(true)
+          }
+        }
+      }
+    })
+
+    it('labels borrowed 7th chords by quality', () => {
+      const result = generateChordSuggestions(field('C', 'Major'), features)
+      const romans = new Map(result.borrowed.map((c) => [c.symbol, c.roman]))
+      expect(romans.get('Abmaj7')).toBe('bVImaj7')
+      expect(romans.get('Bbmaj7')).toBe('bVIImaj7')
+      expect(romans.get('Bb7')).toBe('bVII7')
+      expect(romans.get('Fm7')).toBe('iv7')
+      expect(romans.get('Dø7')).toBe('iiø7')
+    })
+
+    it('keeps harmonic functions for borrowed 7th chords', () => {
+      const result = generateChordSuggestions(field('C', 'Major'), features)
+      const bySymbol = new Map(result.borrowed.map((c) => [c.symbol, c]))
+      expect(bySymbol.get('Abmaj7')?.function).toBe('SD')
+      expect(bySymbol.get('Bb7')?.function).toBe('D')
+      expect(bySymbol.get('Fm7')?.function).toBe('SD')
+    })
+  })
+
+  describe('flat key spelling', () => {
+    const features: RiffFeatures = {
+      pcWeights: [0.1, 0, 0.1, 0.1, 0, 0.2, 0, 0.1, 0, 0.1, 0.3, 0],
+      topPitchClasses: [10, 5, 3],
+    }
+
+    const field = (tonic: string, mode: string): HarmonicFieldCandidate => ({
+      id: `${tonic}-${mode.toLowerCase()}`,
+      tonic,
+      mode,
+      scaleNotes: [],
+      fitScore: 0.9,
+      outOfScale: [],
+    })
+
+    it('spells Bb major diatonic triads with flats', () => {
+      const result = generateChordSuggestions(field('Bb', 'Major'), features)
+      const symbols = result.diatonic.map((c) => c.symbol)
+      for (const expected of ['Bb', 'Cm', 'Dm', 'Eb', 'F', 'Gm', 'A°']) {
+        expect(symbols).toContain(expected)
+      }
+      expect(result.byRoman.get('I')?.[0].symbol).toBe('Bb')
+      expect(result.byRoman.get('IV')?.[0].symbol).toBe('Eb')
+    })
+
+    it('spells Eb minor diatonic chords with flats', () => {
+      const result = generateChordSuggestions(field('Eb', 'Minor'), features)
+      const symbols = result.diatonic.map((c) => c.symbol)
+      for (const expected of ['Ebm', 'F°', 'Gb', 'Abm', 'Bbm', 'Cb', 'Db', 'Bb7', 'D°7']) {
+        expect(symbols).toContain(expected)
+      }
+    })
+
+    it.each([
+      ['Bb', 'Major'],
+      ['Eb', 'Major'],
+      ['Ab', 'Major'],
+      ['Db', 'Major'],
+      ['F', 'Major'],
+      ['Bb', 'Minor'],
+      ['Eb', 'Minor'],
+      ['C', 'Minor'],
+      ['F', 'Minor'],
+    ])('produces no double sharps or double-accidental roots in %s %s', (tonic, mode) => {
+      const result = generateChordSuggestions(field(tonic, mode), features)
+      for (const chord of result.ranked) {
+        expect(chord.symbol).not.toMatch(/##|bb/)
+        for (const tone of chord.chordTones) {
+          expect(tone).not.toMatch(/##/)
+        }
+      }
     })
   })
 })

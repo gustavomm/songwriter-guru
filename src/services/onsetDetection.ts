@@ -200,7 +200,7 @@ export function detectOnsets(audioData: Float32Array, sampleRate: number): Onset
 
   // Calculate spectral flux for each frame
   const fluxValues: number[] = []
-  let prevSpectrum = new Float32Array(FFT_SIZE / 2 + 1)
+  let prevSpectrum: Float32Array = new Float32Array(FFT_SIZE / 2 + 1)
 
   for (let frame = 0; frame < numFrames; frame++) {
     const frameStart = frame * HOP_SIZE

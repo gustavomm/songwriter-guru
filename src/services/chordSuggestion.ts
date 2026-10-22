@@ -62,12 +62,77 @@ function getCanonicalSymbol(symbol: string): string {
   return chord.symbol || symbol
 }
 
+/**
+ * Respell a chord whose root has a double accidental (e.g. Tonal's tritone
+ * substitute 'Dbb7' for subV/VI in Eb minor) with its simpler enharmonic root
+ * ('C7'). Other symbols are returned unchanged.
+ */
+function simplifyDoubleAccidentalRoot(symbol: string): string {
+  const chord = Chord.get(symbol)
+  if (chord.empty || !chord.tonic || !/##|bb/.test(chord.tonic)) return symbol
+  const suffix = chord.aliases[0] ?? ''
+  return `${Note.simplify(chord.tonic)}${suffix}`
+}
+
+/**
+ * Build a roman numeral that reflects a chord's actual quality.
+ *
+ * The degree numeral (e.g. 'IV', 'bVII', 'vii°') only supplies the scale degree
+ * and any chromatic prefix; case and suffix come from the chord's intervals:
+ * - Triads: I (major), i (minor), i° (diminished), I+ (augmented)
+ * - Sevenths: Imaj7, V7, ii7, i(maj7), iiø7, vii°7, III+maj7, I+7
+ * - Sixths: I6 (major sixth), i6 (minor sixth)
+ */
+export function romanForChord(degreeNumeral: string, intervals: readonly string[]): string {
+  const match = /^([b#]*)(IV|iv|VI{0,3}|vi{0,3}|I{1,3}|i{1,3})/.exec(degreeNumeral)
+  const accidental = match?.[1] ?? ''
+  const numeral = (match?.[2] ?? degreeNumeral).toUpperCase()
+
+  const has = (ivl: string) => intervals.includes(ivl)
+  const isMinorThird = has('3m')
+  const base = accidental + (isMinorThird ? numeral.toLowerCase() : numeral)
+
+  // Diminished family
+  if (has('5d') && isMinorThird) {
+    if (has('7d')) return `${base}°7`
+    if (has('7m')) return `${base}ø7`
+    return `${base}°`
+  }
+
+  // Augmented family
+  if (has('5A') && !isMinorThird) {
+    if (has('7M')) return `${base}+maj7`
+    if (has('7m')) return `${base}+7`
+    return `${base}+`
+  }
+
+  // Seventh chords
+  if (has('7M')) return isMinorThird ? `${base}(maj7)` : `${base}maj7`
+  if (has('7m')) return `${base}7`
+
+  // Added sixth chords (e.g. melodic minor tonic m6)
+  if (has('6M')) return `${base}6`
+
+  return base
+}
+
+/**
+ * Strip the quality suffix from a roman numeral, leaving prefix + numeral
+ * (e.g. 'bVIImaj7' → 'bVII', 'iiø7' → 'ii'). Used for function lookups.
+ */
+function romanCore(roman: string): string {
+  return /^[b#]*(IV|iv|VI{0,3}|vi{0,3}|I{1,3}|i{1,3})/.exec(roman)?.[0] || roman
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Key Module Helpers (for major/minor modes)
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
  * Build diatonic chord suggestions from Key module triads and 7ths arrays.
+ * Roman numerals are derived from each chord's actual quality, using the
+ * romanNumerals array only for the scale degree, so e.g. melodic minor's
+ * tonic Em6 is labelled 'i6' (not 'i7') and harmonic minor's AmMaj7 'i(maj7)'.
  */
 function buildDiatonicFromKey(
   triads: readonly string[],
@@ -92,7 +157,7 @@ function buildDiatonicFromKey(
     chords.push({
       id: getCanonicalSymbol(rawSymbol),
       symbol: formatChordSymbol(rawSymbol),
-      roman: romanNumerals[i],
+      roman: romanForChord(romanNumerals[i], chord.intervals),
       function: hf,
       degree: i,
       source: 'diatonic',
@@ -119,7 +184,7 @@ function buildDiatonicFromKey(
     chords.push({
       id: getCanonicalSymbol(rawSymbol),
       symbol: formatChordSymbol(rawSymbol),
-      roman: `${romanNumerals[i]}7`,
+      roman: romanForChord(romanNumerals[i], chord.intervals),
       function: hf,
       degree: i,
       source: 'diatonic',
@@ -143,7 +208,7 @@ function buildSecondaryFromKey(
   const chords: ChordSuggestion[] = []
 
   for (let i = 0; i < secondaryDominants.length; i++) {
-    const rawSymbol = secondaryDominants[i]
+    const rawSymbol = simplifyDoubleAccidentalRoot(secondaryDominants[i])
     if (!rawSymbol) continue // Empty string means no secondary dominant for this degree
 
     const chord = Chord.get(rawSymbol)
@@ -181,7 +246,7 @@ function buildSubstitutesFromKey(
   const chords: ChordSuggestion[] = []
 
   for (let i = 0; i < substituteDominants.length; i++) {
-    const rawSymbol = substituteDominants[i]
+    const rawSymbol = simplifyDoubleAccidentalRoot(substituteDominants[i])
     if (!rawSymbol) continue // Empty string means no substitute for this degree
 
     const chord = Chord.get(rawSymbol)
@@ -526,7 +591,10 @@ function generateBorrowedChords(
     const sourceDisplayName = getDisplayModeName(sourceModeName)
 
     for (let degree = 0; degree < sourceScale.notes.length; degree++) {
-      const root = sourceScale.notes[degree]
+      // Parallel modes of flat keys can contain double flats (Db minor has Bbb):
+      // respell those roots enharmonically (Bbb → A) for readable symbols
+      const scaleNote = sourceScale.notes[degree]
+      const root = /##|bb/.test(scaleNote) ? Note.simplify(scaleNote) : scaleNote
       const triadType = getChordTypeForDegree(sourceModeName, degree)
       const seventhType = getSeventhChordTypeForDegree(sourceModeName, degree)
 
@@ -537,7 +605,8 @@ function generateBorrowedChords(
         if (chord.notes.length) {
           const scores = calculateScores(chord.notes, pcWeights, 'borrowed')
           const roman = getBorrowedRomanNumeral(root, triadType, tonic)
-          const harmonicFn = BORROWED_FUNCTIONS[roman] || BORROWED_FUNCTIONS[roman.toLowerCase()]
+          const core = romanCore(roman)
+          const harmonicFn = BORROWED_FUNCTIONS[core] || BORROWED_FUNCTIONS[core.toLowerCase()]
 
           borrowedChords.push({
             id: getCanonicalSymbol(triadSymbol),
@@ -559,10 +628,9 @@ function generateBorrowedChords(
         const seventhChord = Chord.get(seventhSymbolKey)
         if (seventhChord.notes.length) {
           const scores = calculateScores(seventhChord.notes, pcWeights, 'borrowed')
-          const baseRoman = getBorrowedRomanNumeral(root, seventhType, tonic)
-          const roman = `${baseRoman}7`
-          const harmonicFn =
-            BORROWED_FUNCTIONS[baseRoman] || BORROWED_FUNCTIONS[baseRoman.toLowerCase()]
+          const roman = getBorrowedRomanNumeral(root, seventhType, tonic)
+          const core = romanCore(roman)
+          const harmonicFn = BORROWED_FUNCTIONS[core] || BORROWED_FUNCTIONS[core.toLowerCase()]
 
           borrowedChords.push({
             id: getCanonicalSymbol(seventhSymbolKey),
@@ -609,7 +677,9 @@ function getDisplayModeName(tonalModeName: string): string {
 }
 
 /**
- * Get a simple roman numeral for a borrowed chord.
+ * Get a roman numeral for a borrowed chord, e.g. 'bVII', 'iv7', 'bVImaj7', 'iiø7'.
+ * The degree comes from the root's semitone distance to the tonic; case and
+ * suffix come from the chord quality (see romanForChord).
  */
 function getBorrowedRomanNumeral(root: string, chordType: string, tonic: string): string {
   // Simple mapping based on pitch class distance from tonic
@@ -633,17 +703,8 @@ function getBorrowedRomanNumeral(root: string, chordType: string, tonic: string)
     11: 'VII',
   }
 
-  let numeral = degreeMap[degreeFromTonic] || 'I'
-
-  // Adjust case based on chord quality
-  if (['m', 'm7', 'dim', 'm7b5'].includes(chordType)) {
-    numeral = numeral.toLowerCase()
-  }
-  if (chordType === 'dim' || chordType === 'm7b5') {
-    numeral = numeral + '°'
-  }
-
-  return numeral
+  const numeral = degreeMap[degreeFromTonic] || 'I'
+  return romanForChord(numeral, Chord.get(`${root}${chordType}`).intervals)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
