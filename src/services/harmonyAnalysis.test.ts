@@ -202,18 +202,91 @@ describe('harmonyAnalysis', () => {
 
     it('handles all 12 tonics', () => {
       const features: RiffFeatures = {
-        pcWeights: createPcWeights({ 0: 1 }),
-        topPitchClasses: [0],
+        pcWeights: createPcWeights({ 0: 0.5, 4: 0.3, 7: 0.2 }),
+        topPitchClasses: [0, 4, 7],
       }
 
       const result = analyzeHarmony(features)
 
       // All candidates should have valid tonic and mode
+      expect(result.candidates.length).toBeGreaterThan(0)
       for (const candidate of result.candidates) {
         expect(candidate.tonic).toBeDefined()
         expect(candidate.mode).toBeDefined()
         expect(['Major', 'Minor']).toContain(candidate.mode)
       }
+    })
+  })
+
+  describe('insufficient input', () => {
+    it('returns no candidates for empty input', () => {
+      const result = analyzeHarmony(extractFeatures([]))
+      expect(result.candidates).toEqual([])
+      expect(result.selectedCandidateId).toBe('')
+      expect(result.ambiguous).toBe(false)
+    })
+
+    it('returns no candidates for a single pitch class', () => {
+      // A2, A3 and A4: one pitch class says nothing about major vs minor
+      const result = analyzeHarmony(extractFeatures(riffFromMidi([45, 57, 69, 57])))
+      expect(result.candidates).toEqual([])
+      expect(result.selectedCandidateId).toBe('')
+    })
+
+    it('ignores a negligible ghost pitch class when counting pitch classes', () => {
+      const result = analyzeHarmony({
+        pcWeights: createPcWeights({ 9: 0.99, 1: 0.01 }),
+        topPitchClasses: [9],
+      })
+      expect(result.candidates).toEqual([])
+    })
+
+    it('flags a two-pitch-class (power chord) riff as ambiguous', () => {
+      // E and B only: E major and E minor are equally plausible
+      const result = analyzeHarmony(extractFeatures(riffFromMidi([40, 47, 40, 47, 40])))
+      expect(result.ambiguous).toBe(true)
+      expect(result.candidates[0].tonic).toBe('E')
+      expect(result.alternativeCandidateId).toBe(result.candidates[1].id)
+    })
+  })
+
+  describe('confidence', () => {
+    it('gives each candidate a confidence in 0-1, descending, summing to at most 1', () => {
+      const result = analyzeHarmony(
+        extractFeatures(riffFromMidi([60, 62, 64, 65, 67, 69, 71, 72, 67, 64, 60]))
+      )
+      const confidences = result.candidates.map((c) => c.confidence ?? NaN)
+      for (let i = 0; i < confidences.length; i++) {
+        expect(confidences[i]).toBeGreaterThanOrEqual(0)
+        expect(confidences[i]).toBeLessThanOrEqual(1)
+        if (i > 0) expect(confidences[i - 1]).toBeGreaterThanOrEqual(confidences[i])
+      }
+      expect(confidences.reduce((a, b) => a + b, 0)).toBeLessThanOrEqual(1 + 1e-9)
+    })
+
+    it('is confident and not ambiguous for a clear diatonic riff', () => {
+      // C major scale up and down, ending on C
+      const result = analyzeHarmony(
+        extractFeatures(riffFromMidi([60, 62, 64, 65, 67, 69, 71, 72, 67, 64, 60]))
+      )
+      expect(result.selectedCandidateId).toBe('C-major')
+      expect(result.ambiguous).toBe(false)
+      expect(result.alternativeCandidateId).toBeUndefined()
+      expect(result.candidates[0].confidence).toBeGreaterThan(0.75)
+    })
+
+    it('does not penalize the raised 6th and 7th in minor', () => {
+      // A melodic minor ascending (F#, G#) vs A natural minor ascending (F, G)
+      const melodic = analyzeHarmony(
+        extractFeatures(riffFromMidi([57, 59, 60, 62, 64, 66, 68, 69, 64, 57]))
+      )
+      const natural = analyzeHarmony(
+        extractFeatures(riffFromMidi([57, 59, 60, 62, 64, 65, 67, 69, 64, 57]))
+      )
+      const melodicFit = melodic.candidates.find((c) => c.id === 'A-minor')!.fitScore
+      const naturalFit = natural.candidates.find((c) => c.id === 'A-minor')!.fitScore
+      expect(melodic.selectedCandidateId).toBe('A-minor')
+      expect(naturalFit - melodicFit).toBeLessThan(0.02)
     })
   })
 
@@ -256,14 +329,15 @@ describe('harmonyAnalysis', () => {
       const majorTonics = ['C', 'Db', 'D', 'Eb', 'E', 'F', 'F#', 'G', 'Ab', 'A', 'Bb', 'B']
       const minorTonics = ['C', 'C#', 'D', 'Eb', 'E', 'F', 'F#', 'G', 'G#', 'A', 'Bb', 'B']
 
-      // A single pitch class pulls each of the 12 tonics to the top in turn
+      // A tonic + fifth riff pulls each of the 12 tonics to the top in turn
       for (let pc = 0; pc < 12; pc++) {
         const result = analyzeHarmony({
-          pcWeights: createPcWeights({ [pc]: 1 }),
-          topPitchClasses: [pc],
+          pcWeights: createPcWeights({ [pc]: 0.7, [(pc + 7) % 12]: 0.3 }),
+          topPitchClasses: [pc, (pc + 7) % 12],
           lastNotePc: pc,
           bassPc: pc,
         })
+        expect(result.candidates.length).toBeGreaterThan(0)
 
         for (const candidate of result.candidates) {
           const tonics = candidate.mode === 'Major' ? majorTonics : minorTonics
