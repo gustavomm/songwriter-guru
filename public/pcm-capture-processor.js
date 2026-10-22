@@ -25,12 +25,22 @@ class PCMCaptureProcessor extends AudioWorkletProcessor {
     
     // Only process if we have input data
     if (input && input.length > 0 && input[0].length > 0) {
-      // Get the first channel (mono) - if stereo, we'll mix down in the service
-      const channelData = input[0]
-      
-      // Create a copy of the samples (the buffer is reused by the audio system)
-      const samples = new Float32Array(channelData.length)
-      samples.set(channelData)
+      // Mix all channels down to mono by averaging, so a multi-input interface
+      // with the guitar on input 2 (right channel) is still captured.
+      // This also copies the samples (the buffer is reused by the audio system).
+      const numChannels = input.length
+      const samples = new Float32Array(input[0].length)
+      for (let ch = 0; ch < numChannels; ch++) {
+        const channelData = input[ch]
+        for (let i = 0; i < samples.length; i++) {
+          samples[i] += channelData[i]
+        }
+      }
+      if (numChannels > 1) {
+        for (let i = 0; i < samples.length; i++) {
+          samples[i] /= numChannels
+        }
+      }
       
       // Send samples to the main thread
       this.port.postMessage({

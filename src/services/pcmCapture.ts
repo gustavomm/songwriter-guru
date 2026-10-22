@@ -18,6 +18,22 @@ export interface PCMCaptureResult {
   durationMs: number
 }
 
+/**
+ * Check whether captured PCM data can be used for transcription.
+ * An empty buffer (e.g. the worklet never delivered samples) counts as missing,
+ * so callers fall back to the MediaRecorder blob.
+ */
+export function hasUsablePcmData<T extends { pcmData?: Float32Array; pcmSampleRate?: number }>(
+  source: T
+): source is T & { pcmData: Float32Array; pcmSampleRate: number } {
+  return (
+    source.pcmData !== undefined &&
+    source.pcmData.length > 0 &&
+    source.pcmSampleRate !== undefined &&
+    source.pcmSampleRate > 0
+  )
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Feature Detection
 // ─────────────────────────────────────────────────────────────────────────────
@@ -103,6 +119,12 @@ export class PCMCapture {
       // Connect the audio graph: source -> worklet (-> nowhere, we just capture)
       this.sourceNode.connect(this.workletNode)
       // Don't connect to destination - we don't want to hear the input
+
+      // A context created outside a user gesture (or after an await) may start
+      // suspended, in which case the worklet would never receive samples
+      if (this.audioContext.state === 'suspended') {
+        await this.audioContext.resume()
+      }
 
       // Start capturing
       this.sampleChunks = []

@@ -12,6 +12,8 @@ import {
   DEFAULT_MERGE_TIME_THRESHOLD,
   ISOLATED_NOTE_THRESHOLD,
   ISOLATED_NOTE_MIN_VELOCITY,
+  SIGNIFICANT_BEND_THRESHOLD,
+  PITCH_BEND_BINS_PER_SEMITONE,
 } from './noteProcessing'
 import type { TranscribedNote } from '../domain/types'
 
@@ -72,25 +74,31 @@ describe('noteProcessing', () => {
       expect(hasSignificantPitchBend(note)).toBe(false)
     })
 
-    it('returns false for small pitch bends', () => {
-      const note = createNote(0, 1, 60, 0.5, [0.1, 0.2, 0.15])
+    // Basic Pitch bends are integer contour bins of 1/3 semitone
+    it('uses a half-semitone threshold expressed in contour bins', () => {
+      expect(PITCH_BEND_BINS_PER_SEMITONE).toBe(3)
+      expect(SIGNIFICANT_BEND_THRESHOLD).toBe(1.5)
+    })
+
+    it('returns false for small pitch bends (one bin = 1/3 semitone)', () => {
+      const note = createNote(0, 1, 60, 0.5, [0, 1, -1, 0])
       expect(hasSignificantPitchBend(note)).toBe(false)
     })
 
-    it('returns true for significant pitch bend', () => {
-      const note = createNote(0, 1, 60, 0.5, [0.1, 0.5, 0.2]) // 0.5 > 0.3 threshold
+    it('returns true for significant pitch bend (2 bins = 2/3 semitone)', () => {
+      const note = createNote(0, 1, 60, 0.5, [0, 2, 1])
       expect(hasSignificantPitchBend(note)).toBe(true)
     })
 
     it('returns true for negative significant pitch bend', () => {
-      const note = createNote(0, 1, 60, 0.5, [0.1, -0.5, 0.2])
+      const note = createNote(0, 1, 60, 0.5, [0, -2, -1])
       expect(hasSignificantPitchBend(note)).toBe(true)
     })
 
     it('uses custom threshold', () => {
-      const note = createNote(0, 1, 60, 0.5, [0.2])
-      expect(hasSignificantPitchBend(note, 0.1)).toBe(true)
-      expect(hasSignificantPitchBend(note, 0.3)).toBe(false)
+      const note = createNote(0, 1, 60, 0.5, [1])
+      expect(hasSignificantPitchBend(note, 0.5)).toBe(true)
+      expect(hasSignificantPitchBend(note, 1.5)).toBe(false)
     })
   })
 
@@ -268,7 +276,7 @@ describe('noteProcessing', () => {
     it('preserves intentional pitch bends', () => {
       const notes = [
         createNote(0, 0.5, 60, 0.5),
-        createNote(0.5, 0.6, 61, 0.5, [0.5]), // Has significant pitch bend
+        createNote(0.5, 0.6, 61, 0.5, [0, 2, 3]), // Has significant pitch bend (bins)
         createNote(0.6, 1, 60, 0.5),
       ]
       const result = absorbWobbleNotes(notes)
@@ -277,13 +285,13 @@ describe('noteProcessing', () => {
 
     it('concatenates pitch bends when absorbing', () => {
       const notes = [
-        createNote(0, 0.5, 60, 0.5, [0.1]),
-        createNote(0.5, 0.6, 61, 0.5, [0.15]), // small bend, will be absorbed
-        createNote(0.6, 1, 60, 0.5, [0.2]),
+        createNote(0, 0.5, 60, 0.5, [0]),
+        createNote(0.5, 0.6, 61, 0.5, [1]), // small bend (1 bin), will be absorbed
+        createNote(0.6, 1, 60, 0.5, [-1]),
       ]
       const result = absorbWobbleNotes(notes)
       expect(result.length).toBe(1)
-      expect(result[0].pitchBend).toEqual([0.1, 0.15, 0.2])
+      expect(result[0].pitchBend).toEqual([0, 1, -1])
     })
   })
 

@@ -1,4 +1,4 @@
-import { Note, Chord, RomanNumeral } from 'tonal'
+import { Note, Chord } from 'tonal'
 import type {
   ProgressionSuggestion,
   ProgressionSlot,
@@ -20,6 +20,12 @@ const MODE_NAME_MAP: Record<string, string> = {
 
 // Default weirdness value (0 = conventional, 1 = color-forward)
 const DEFAULT_WEIRDNESS = 0.5
+
+// Selection penalty (scaled by 1 - weirdness) for diatonic colour variants such
+// as minor's i(maj7), i6 and III+, so safe progressions use plain i / i7
+const COLOR_VARIANT_SELECTION_PENALTY = 0.15
+// Below this weirdness, colour variants never fill a tonic slot
+const SAFE_TONIC_WEIRDNESS = 0.5
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Scoring Components
@@ -123,17 +129,17 @@ const NEAPOLITAN_WRONG_RESOLUTION = -0.15
 const SUBV_CORRECT_RESOLUTION = 0.2
 const SUBV_WRONG_RESOLUTION = -0.15
 
-/**
- * Harmonic function assignments for borrowed chords by degree.
- * Borrowed chords preserve the function of the degree they replace.
- */
-const BORROWED_CHORD_FUNCTIONS: Record<string, HarmonicFunction> = {
-  bII: 'SD', // Neapolitan - predominant function
-  bIII: 'T', // Borrowed mediant - tonic substitute
-  bVI: 'SD', // Borrowed submediant - predominant
-  bVII: 'D', // Borrowed subtonic - dominant function
-  iv: 'SD', // Minor iv in major - predominant
-}
+// Cadence scores (see scoreCadence)
+const CADENCE_BASE = 0.3
+const CADENCE_AUTHENTIC = 0.9 // V / V7 / vii° → I
+const CADENCE_SUBV = 0.85 // Tritone sub (bII7) → I
+const CADENCE_SOFT_DOMINANT = 0.75 // bVII / VII / minor v → I (modal / natural-minor cadence)
+const CADENCE_TONIC_ONLY = 0.6 // Ends on I, but not approached from a dominant
+const CADENCE_PLAGAL = 0.8 // IV / iv → I
+const CADENCE_PLAGAL_WEAK = 0.5
+const CADENCE_HALF = 0.7
+const CADENCE_DECEPTIVE = 0.75
+const CADENCE_OPEN = 0.5
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Resolution Rules (applied chords, tritone subs, Neapolitan)
@@ -151,11 +157,19 @@ function getRomanDegree(roman: string): string {
 
 /**
  * Normalize a roman numeral for degree comparison: keeps only the scale
- * degree and ignores case, so "V7" matches "V", "ii7" matches "ii" and
- * "III+" matches "III".
+ * degree, case included, so "V7" matches "V", "ii7" matches "ii" and
+ * "III+" matches "III", but "v" (minor) does not match "V" (major): an
+ * applied V/V must resolve to the major dominant.
  */
 function normalizeRoman(roman: string): string {
-  return getRomanDegree(roman).toLowerCase()
+  return getRomanDegree(roman)
+}
+
+/**
+ * Whether a roman numeral names the tonic degree (I or i, any quality).
+ */
+function isTonicRoman(roman: string): boolean {
+  return getRomanDegree(roman).toUpperCase() === 'I'
 }
 
 /**
@@ -195,7 +209,7 @@ function scoreNeapolitanResolution(roman: string, nextRoman: string | null): num
   if (!nextRoman) return NEAPOLITAN_WRONG_RESOLUTION
 
   // Neapolitan should resolve to V (or V7, etc.)
-  if (normalizeRoman(nextRoman) === 'v') {
+  if (normalizeRoman(nextRoman) === 'V') {
     return NEAPOLITAN_CORRECT_RESOLUTION
   }
 
@@ -215,7 +229,7 @@ function scoreSubstituteResolution(roman: string, nextRoman: string | null): num
 
   // subV (not subV/x) should resolve to tonic (I)
   if (!roman.includes('/')) {
-    return normalizeRoman(nextRoman) === 'i' ? SUBV_CORRECT_RESOLUTION : SUBV_WRONG_RESOLUTION
+    return isTonicRoman(nextRoman) ? SUBV_CORRECT_RESOLUTION : SUBV_WRONG_RESOLUTION
   }
 
   // subV/x should resolve to x
@@ -304,7 +318,11 @@ function isValidTransition(chord: ChordSuggestion, next: ChordSuggestion | null)
   const target = getResolutionTarget(chord)
   if (target) {
     if (!next?.roman) return false
-    if (normalizeRoman(next.roman) !== normalizeRoman(target)) return false
+    // A bare subV resolves to the tonic in either mode (I or i)
+    const matchesTarget = isTonicRoman(target)
+      ? isTonicRoman(next.roman)
+      : normalizeRoman(next.roman) === normalizeRoman(target)
+    if (!matchesTarget) return false
 
     const interval = getResolutionInterval(chord)
     const root = getRootChroma(chord)
@@ -393,7 +411,7 @@ const FUNCTION_TEMPLATES: FunctionTemplate[] = [
   // Open/modal patterns (no strong cadence)
   { functions: ['T1', 'D', 'SD', 'D'], name: 'T-D-SD-D', cadence: 'open' },
   { functions: ['T', 'T', 'SD', 'SD'], name: 'T-T-SD-SD', cadence: 'open' },
-  { functions: ['T1', 'T', 'D', 'T'], name: 'T-T-D-T', cadence: 'authentic' },
+  { functions: ['T1', 'T', 'D', 'T1'], name: 'T-T-D-T', cadence: 'authentic' },
 
   // Longer patterns
   { functions: ['T1', 'T', 'SD', 'D', 'T', 'SD', 'D', 'T1'], name: '8-bar', cadence: 'authentic' },
@@ -445,17 +463,29 @@ function getRankedCandidates(
     filtered = filtered.filter((c) => getRootChroma(c) === tonicChroma)
   }
 
+  // Parallel-mode tonic chords (Cm / C7 in C major, A / A7 in A minor) change
+  // the key centre rather than prolong it: keep them out of tonic slots
+  if (actualFunction === 'T') {
+    filtered = filtered.filter((c) => c.source !== 'borrowed' || getRootChroma(c) !== tonicChroma)
+
+    // Safe progressions rest on plain i / i7, not i(maj7), i6 or III+
+    if (weirdness < SAFE_TONIC_WEIRDNESS) {
+      const plain = filtered.filter((c) => !c.colorVariant)
+      if (plain.length > 0) filtered = plain
+    }
+  }
+
   // Deceptive cadence: exclude tonic root chords for T slots
   if (isDeceptiveCadence && targetFunction === 'T') {
     filtered = filtered.filter((c) => getRootChroma(c) !== tonicChroma)
   }
 
-  // Sort by weirdness-adjusted score (descending)
-  return [...filtered].sort((a, b) => {
-    const scoreA = computeChordSelectionScore(a.supportScore, a.colorScore, weirdness)
-    const scoreB = computeChordSelectionScore(b.supportScore, b.colorScore, weirdness)
-    return scoreB - scoreA
-  })
+  // Sort by weirdness-adjusted score (descending). Diatonic colour variants
+  // (i(maj7), i6, III+ in minor) are pushed down at low weirdness.
+  const selectionScore = (c: ChordSuggestion) =>
+    computeChordSelectionScore(c.supportScore, c.colorScore, weirdness) -
+    (c.colorVariant ? COLOR_VARIANT_SELECTION_PENALTY * (1 - weirdness) : 0)
+  return [...filtered].sort((a, b) => selectionScore(b) - selectionScore(a))
 }
 
 /**
@@ -492,48 +522,6 @@ function getChordsForFunction(
         isValidTransition(c, next)
     )
     .slice(0, limit)
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Transformation Types
-// ─────────────────────────────────────────────────────────────────────────────
-
-/**
- * Get the harmonic function of a roman numeral directly (without chord symbol).
- */
-function getHarmonicFunctionFromRoman(roman: string): HarmonicFunction | null {
-  // Borrowed chords (look up by bare degree so "bVII7" / "bVImaj7" / "iv7" match)
-  const degree = getRomanDegree(roman)
-  if (degree.startsWith('b') || degree === 'iv') {
-    return BORROWED_CHORD_FUNCTIONS[degree] || 'SD'
-  }
-
-  // Applied chords are dominant function
-  if (roman.includes('/')) {
-    return 'D'
-  }
-
-  const parsed = RomanNumeral.get(roman)
-  if (parsed.empty) return null
-
-  switch (parsed.step) {
-    case 0:
-      return 'T' // I/i
-    case 1:
-      return 'SD' // ii
-    case 2:
-      return 'T' // iii/III
-    case 3:
-      return 'SD' // IV/iv
-    case 4:
-      return 'D' // V/v
-    case 5:
-      return 'T' // vi/VI
-    case 6:
-      return 'D' // vii°/VII
-    default:
-      return null
-  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -641,7 +629,7 @@ function generateFromFunctionTemplate(
     totalSupportScore += chord.supportScore
     totalColorScore += chord.colorScore
 
-    if (chord.source !== 'diatonic') {
+    if (chord.source !== 'diatonic' || chord.colorVariant) {
       hasColorChord = true
     }
     if (chord.source === 'secondary_dominant' || chord.source === 'substitute_dominant') {
@@ -657,7 +645,7 @@ function generateFromFunctionTemplate(
   const spice = numChords > 0 ? totalColorScore / numChords : 0
 
   // Calculate cadence score
-  const cadenceScore = scoreCadenceForTemplate(template, romanNumerals)
+  const cadenceScore = scoreCadence(template.cadence, selectedChords, tonic)
 
   // Compute final score
   const components: ProgressionScoreComponents = {
@@ -702,46 +690,86 @@ function generateFromFunctionTemplate(
 }
 
 /**
- * Score the cadence quality for a function template.
+ * How strongly a chord approaches the tonic as a dominant:
+ * - 'authentic': V / V7 (major chord a fifth above the tonic) or vii° / viiø7
+ *   / vii°7 (diminished chord a half step below)
+ * - 'subV': tritone substitute (dominant 7th a half step above the tonic)
+ * - 'soft': bVII / VII (subtonic) or a minor v (natural-minor cadences)
+ * - null: not a dominant approach to the tonic (e.g. an applied subV/iii)
  */
-function scoreCadenceForTemplate(template: FunctionTemplate, romans: string[]): number {
-  if (romans.length < 2) return 0.3
+function getDominantApproach(
+  chord: ChordSuggestion,
+  tonicChroma: number
+): 'authentic' | 'subV' | 'soft' | null {
+  const root = getRootChroma(chord)
+  if (root === null) return null
+  // Applied chords that target something other than the tonic don't cadence on it
+  const target = getResolutionTarget(chord)
+  if (target && !isTonicRoman(target)) return null
 
-  const lastRoman = romans[romans.length - 1]
-  const secondLastRoman = romans[romans.length - 2]
+  const intervals = Chord.get(chord.id).intervals
+  const has = (ivl: string) => intervals.includes(ivl)
+  const interval = (root - tonicChroma + 12) % 12
 
-  // Check last chord function
-  const lastFn = getHarmonicFunctionFromRoman(lastRoman)
-  const secondLastFn = getHarmonicFunctionFromRoman(secondLastRoman)
+  if (interval === 7) return has('3M') ? 'authentic' : 'soft'
+  if (interval === 11 && has('3m') && has('5d')) return 'authentic'
+  if (interval === 1 && has('3M') && has('7m')) return 'subV'
+  if (interval === 10 && has('3M')) return 'soft'
+  return null
+}
 
-  let score = 0.3 // Base score
+/**
+ * Score how well a progression realizes its template's cadence (0-1).
+ * - authentic: must end on the tonic chord (root = key tonic), approached
+ *   from V/V7/vii° (best), a tritone sub, or bVII/VII/v (softer)
+ * - plagal: SD → tonic chord
+ * - half: ends on a dominant-function chord
+ * - deceptive: dominant → non-tonic tonic-function chord
+ */
+function scoreCadence(
+  cadence: FunctionTemplate['cadence'],
+  selectedChords: ChordSuggestion[],
+  tonic: string
+): number {
+  if (selectedChords.length < 2) return CADENCE_BASE
 
-  switch (template.cadence) {
-    case 'authentic':
-      // D→T is ideal
-      if (secondLastFn === 'D' && lastFn === 'T') score = 0.9
-      else if (lastFn === 'T') score = 0.6
-      break
+  const last = selectedChords[selectedChords.length - 1]
+  const secondLast = selectedChords[selectedChords.length - 2]
+  const tonicChroma = Note.chroma(tonic)
+  const endsOnTonic = last.function === 'T' && getRootChroma(last) === tonicChroma
+
+  switch (cadence) {
+    case 'authentic': {
+      if (!endsOnTonic || tonicChroma === undefined) return CADENCE_BASE
+      const approach = getDominantApproach(secondLast, tonicChroma)
+      if (approach === 'authentic') return CADENCE_AUTHENTIC
+      if (approach === 'subV') return CADENCE_SUBV
+      if (approach === 'soft') return CADENCE_SOFT_DOMINANT
+      return CADENCE_TONIC_ONLY
+    }
     case 'plagal':
-      // SD→T
-      if (secondLastFn === 'SD' && lastFn === 'T') score = 0.8
-      else if (lastFn === 'T') score = 0.5
-      break
+      if (endsOnTonic && secondLast.function === 'SD') return CADENCE_PLAGAL
+      if (endsOnTonic) return CADENCE_PLAGAL_WEAK
+      return CADENCE_BASE
     case 'half':
-      // Ends on D
-      if (lastFn === 'D') score = 0.7
-      break
+      return last.function === 'D' ? CADENCE_HALF : CADENCE_BASE
     case 'deceptive':
-      // D→non-root T
-      if (secondLastFn === 'D' && lastFn === 'T') score = 0.75
-      break
+      return secondLast.function === 'D' && last.function === 'T' && !endsOnTonic
+        ? CADENCE_DECEPTIVE
+        : CADENCE_BASE
     case 'open':
-      // No strong expectation
-      score = 0.5
-      break
+      return CADENCE_OPEN
   }
+}
 
-  return score
+/**
+ * Dedupe key for a progression: its sequence of chord roots (pitch classes),
+ * so variants that only differ in chord quality/extension collapse together.
+ */
+function progressionKey(suggestion: ProgressionSuggestion): string {
+  return suggestion.slots
+    .map((slot, i) => getRootChroma(slot.chosen) ?? suggestion.chords[i])
+    .join('-')
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -790,7 +818,11 @@ export function generateProgressions(
       spice:
         suggestion.slots.reduce((sum, s) => sum + s.chosen.colorScore, 0) / suggestion.slots.length,
       motion: scoreMotion(suggestion.slots.map((slot) => slot.chosen)),
-      cadence: scoreCadenceForTemplate(template, suggestion.romans),
+      cadence: scoreCadence(
+        template.cadence,
+        suggestion.slots.map((slot) => slot.chosen),
+        tonic
+      ),
       hasColorChord: suggestion.containsColorChord,
     }
     return { ...suggestion, score: computeFinalScore(components, weirdness) }
@@ -868,25 +900,33 @@ export function generateProgressions(
     }
   }
 
-  // Deduplicate each pool separately
+  // Deduplicate each pool separately. Progressions are near-duplicates when
+  // their chord roots match (Am–Dm–E–Am vs Am7–Dm7–E7–Am): pools are sorted
+  // first so the highest-scoring variant is the one kept.
   const deduplicateProgressions = (
     progressions: ProgressionSuggestion[]
   ): ProgressionSuggestion[] => {
     const seen = new Set<string>()
-    return progressions.filter((s) => {
-      const key = s.chords.join('-')
-      if (seen.has(key)) return false
-      seen.add(key)
-      return true
-    })
+    return [...progressions]
+      .sort((a, b) => b.score - a.score)
+      .filter((s) => {
+        const key = progressionKey(s)
+        if (seen.has(key)) return false
+        seen.add(key)
+        return true
+      })
   }
 
-  const uniqueStandard = deduplicateProgressions(standardProgressions)
-  const uniqueDiatonic = deduplicateProgressions(diatonicProgressions)
+  // At low weirdness, drop progressions (e.g. from the colourful weirdness
+  // variations above) with a colour variant like i(maj7) in a tonic slot,
+  // matching the tonic-slot rule in getRankedCandidates
+  const hasColorVariantTonic = (s: ProgressionSuggestion) =>
+    s.slots.some((slot) => slot.chosen.colorVariant && slot.chosen.function === 'T')
+  const keepForWeirdness = (s: ProgressionSuggestion) =>
+    weirdness >= SAFE_TONIC_WEIRDNESS || !hasColorVariantTonic(s)
 
-  // Sort each pool by score
-  uniqueStandard.sort((a, b) => b.score - a.score)
-  uniqueDiatonic.sort((a, b) => b.score - a.score)
+  const uniqueStandard = deduplicateProgressions(standardProgressions.filter(keepForWeirdness))
+  const uniqueDiatonic = deduplicateProgressions(diatonicProgressions.filter(keepForWeirdness))
 
   // Combine: Take top standard progressions but reserve slots for diatonic
   // This ensures diatonic progressions (with actual V, ii, iii) appear
@@ -895,7 +935,7 @@ export function generateProgressions(
 
   // Take top 10 from standard
   for (const s of uniqueStandard.slice(0, 10)) {
-    const key = s.chords.join('-')
+    const key = progressionKey(s)
     if (!finalSeen.has(key)) {
       finalSeen.add(key)
       result.push(s)
@@ -906,7 +946,7 @@ export function generateProgressions(
   let diatonicAdded = 0
   for (const s of uniqueDiatonic) {
     if (diatonicAdded >= 5) break
-    const key = s.chords.join('-')
+    const key = progressionKey(s)
     if (!finalSeen.has(key)) {
       finalSeen.add(key)
       result.push(s)
@@ -914,10 +954,28 @@ export function generateProgressions(
     }
   }
 
+  // At higher weirdness, keep a couple of applied-chord progressions (V/x,
+  // subV/x) in the mix so borrowed colour chords don't crowd them all out
+  if (weirdness >= 0.5) {
+    let secondaryAdded = 0
+    for (const s of uniqueStandard) {
+      if (secondaryAdded >= 2) break
+      if (!s.containsSecondaryDominant) continue
+      const key = progressionKey(s)
+      if (finalSeen.has(key)) {
+        secondaryAdded++
+        continue
+      }
+      finalSeen.add(key)
+      result.push(s)
+      secondaryAdded++
+    }
+  }
+
   // Fill remaining slots from standard if we have room
   for (const s of uniqueStandard.slice(10)) {
     if (result.length >= 15) break
-    const key = s.chords.join('-')
+    const key = progressionKey(s)
     if (!finalSeen.has(key)) {
       finalSeen.add(key)
       result.push(s)
@@ -938,6 +996,7 @@ export function generateProgressions(
 
 export {
   computeFinalScore,
+  scoreCadence,
   scoreAppliedChordResolution,
   scoreNeapolitanResolution,
   scoreSubstituteResolution,

@@ -170,7 +170,7 @@ describe('harmonyAnalysis', () => {
 
       // Notes with chromatic additions
       const withChromatic: RiffFeatures = {
-        pcWeights: createPcWeights({ 0: 0.2, 1: 0.2, 4: 0.2, 6: 0.2, 7: 0.2 }), // C#, F# are chromatic
+        pcWeights: createPcWeights({ 0: 0.3, 1: 0.1, 4: 0.3, 6: 0.1, 7: 0.2 }), // C#, F# are chromatic
         topPitchClasses: [0, 1, 4, 6, 7],
       }
 
@@ -291,18 +291,20 @@ describe('harmonyAnalysis', () => {
       expect(fMajor!.outOfScale.map((n) => n.note)).not.toContain('D#')
     })
 
-    it('spells the raised leading tone of a minor key with a sharp', () => {
-      // A harmonic minor riff: A B C D E F G#
+    it('spells the raised sixth of a minor key with a sharp', () => {
+      // An A melodic minor riff: A B C D E F# G#
       const features: RiffFeatures = {
-        pcWeights: createPcWeights({ 9: 0.3, 11: 0.1, 0: 0.15, 2: 0.1, 4: 0.15, 5: 0.1, 8: 0.1 }),
-        topPitchClasses: [9, 0, 4, 11, 8],
+        pcWeights: createPcWeights({ 9: 0.3, 11: 0.1, 0: 0.15, 2: 0.1, 4: 0.15, 6: 0.1, 8: 0.1 }),
+        topPitchClasses: [9, 0, 4, 11, 6],
         lastNotePc: 9,
         bassPc: 9,
       }
 
       const aMinor = findCandidate(features, 'A-minor')
       expect(aMinor).toBeDefined()
-      expect(aMinor!.outOfScale).toEqual([{ note: 'G#', weight: 0.1 }])
+      // The raised 7th (G#) is the harmonic minor leading tone and counts as
+      // in-scale; the raised 6th is reported (spelled F#, not Gb)
+      expect(aMinor!.outOfScale).toEqual([{ note: 'F#', weight: 0.1 }])
     })
   })
 
@@ -348,6 +350,59 @@ describe('harmonyAnalysis', () => {
       }
       const scores = result.candidates.map((c) => c.fitScore)
       expect(scores[0]).toBeGreaterThan(scores[1])
+    })
+  })
+
+  describe('degenerate input', () => {
+    it('returns no candidates for an empty riff', () => {
+      const result = analyzeHarmony(extractFeatures([]))
+
+      expect(result.candidates).toEqual([])
+      expect(result.selectedCandidateId).toBe('')
+    })
+
+    it('returns no candidates for a single repeated pitch class', () => {
+      // A A A A (two octaves): one pitch class can't define a key
+      const result = analyzeHarmony(extractFeatures(riffFromMidi([57, 57, 69, 57])))
+
+      expect(result.candidates).toEqual([])
+      expect(result.selectedCandidateId).toBe('')
+    })
+
+    it('still ranks keys for two distinct pitch classes', () => {
+      const result = analyzeHarmony(extractFeatures(riffFromMidi([57, 64, 57, 64])))
+
+      expect(result.candidates.length).toBeGreaterThan(0)
+      expect(result.selectedCandidateId).toBe(result.candidates[0].id)
+    })
+  })
+
+  describe('harmonic minor leading tone', () => {
+    // A C E D C B G# A E F E A: A harmonic minor with the raised 7th
+    const harmonicMinorRiff = [57, 60, 64, 62, 60, 59, 56, 57, 64, 65, 64, 57]
+
+    it('does not let a G# in an A minor riff lose to A major', () => {
+      const result = analyzeHarmony(extractFeatures(riffFromMidi(harmonicMinorRiff)))
+      const aMinor = result.candidates.find((c) => c.id === 'A-minor')
+      const aMajor = result.candidates.find((c) => c.id === 'A-major')
+
+      expect(result.selectedCandidateId).toBe('A-minor')
+      expect(aMinor).toBeDefined()
+      if (aMajor) expect(aMinor!.fitScore).toBeGreaterThan(aMajor.fitScore)
+    })
+
+    it('does not penalize or report the raised 7th of a minor key', () => {
+      const withLeadingTone = extractFeatures(riffFromMidi(harmonicMinorRiff))
+      const aMinor = analyzeHarmony(withLeadingTone).candidates.find((c) => c.id === 'A-minor')!
+
+      expect(aMinor.outOfScale.map((o) => o.note)).not.toContain('G#')
+      // Every note is in A harmonic minor, so the fit is as good as an
+      // all-diatonic riff with the same tonic emphasis
+      const naturalRiff = harmonicMinorRiff.map((midi) => (midi === 56 ? 55 : midi))
+      const aMinorNatural = analyzeHarmony(
+        extractFeatures(riffFromMidi(naturalRiff))
+      ).candidates.find((c) => c.id === 'A-minor')!
+      expect(aMinor.fitScore).toBeCloseTo(aMinorNatural.fitScore, 5)
     })
   })
 

@@ -25,6 +25,13 @@ export interface ChordSuggestion {
   /** For applied chords, the target chord they resolve to (e.g., V/ii -> "ii") */
   resolvesToRoman?: string
 
+  /**
+   * Diatonic, but a colour variant rather than a plain function chord (e.g.
+   * harmonic/melodic minor's i(maj7), i6, III+): conventional progressions
+   * avoid these at low weirdness
+   */
+  colorVariant?: boolean
+
   // Source classification
   source: ChordSource
   /** Additional sources if chord belongs to multiple categories */

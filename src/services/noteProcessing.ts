@@ -11,8 +11,11 @@ import type { TranscribedNote } from '../domain/types'
 // Guitar polyphony limit (6 strings max - filters hallucinated harmonics/artifacts)
 export const DEFAULT_MAX_POLYPHONY = 6
 
-// Pitch bend threshold for detecting intentional bends vs artifacts
-export const SIGNIFICANT_BEND_THRESHOLD = 0.3 // semitones
+// Pitch bend threshold for detecting intentional bends vs artifacts.
+// Basic Pitch reports pitch bends as integer contour bins of 1/3 semitone,
+// so 1.5 bins = half a semitone (a bend of 2+ bins counts as significant).
+export const PITCH_BEND_BINS_PER_SEMITONE = 3
+export const SIGNIFICANT_BEND_THRESHOLD = 0.5 * PITCH_BEND_BINS_PER_SEMITONE // 1.5 bins
 
 // Post-processing merge settings
 export const DEFAULT_MERGE_TIME_THRESHOLD = 0.15 // Max gap (seconds) to consider notes as "connected"
@@ -42,6 +45,7 @@ export function concatenatePitchBends(...notes: TranscribedNote[]): number[] | u
 
 /**
  * Check if a note has significant pitch bend (likely intentional vibrato/slide).
+ * Bends and threshold are in Basic Pitch contour bins (1/3 semitone each).
  */
 export function hasSignificantPitchBend(
   note: TranscribedNote,

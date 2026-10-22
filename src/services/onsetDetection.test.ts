@@ -107,6 +107,38 @@ describe('onsetDetection', () => {
       }
     })
 
+    it('reports onset times at the analysis window center', () => {
+      // Silence followed by tone starting at exactly 0.5s
+      const silence = createSilence(500)
+      const tone = createSineWave(440, 0.8, 500)
+      const audio = new Float32Array(silence.length + tone.length)
+      audio.set(silence, 0)
+      audio.set(tone, silence.length)
+
+      const onsets = detectOnsets(audio, 22050)
+
+      expect(onsets.length).toBeGreaterThanOrEqual(1)
+      // Using the window start would put this ~46ms early (FFT_SIZE / 2 samples)
+      expect(Math.abs(onsets[0].timeSec - 0.5)).toBeLessThan(0.025)
+    })
+
+    it('does not treat the first frame as an onset against silence', () => {
+      // Sound from the very first sample, then a louder attack at 0.6s
+      const quietStart = createSineWave(220, 0.3, 600)
+      const attack = createSineWave(660, 0.9, 400)
+      const audio = new Float32Array(quietStart.length + attack.length)
+      audio.set(quietStart, 0)
+      audio.set(attack, quietStart.length)
+
+      const onsets = detectOnsets(audio, 22050)
+
+      // The attack must still be found and normalized as the strongest event
+      // (a first-frame flux against silence would otherwise dominate)
+      const nearAttack = findNearestOnset(onsets, 0.6, 0.05)
+      expect(nearAttack).toBeDefined()
+      expect(nearAttack!.strength).toBeCloseTo(1, 5)
+    })
+
     it('respects minimum interval between onsets', () => {
       const audio = createAudioWithAttacks([0.2, 0.6, 1.0], 150, 1500)
       const onsets = detectOnsets(audio, 22050)

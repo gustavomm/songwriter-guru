@@ -18,6 +18,8 @@ export function HarmonicFieldsPanel() {
 
   const isLoading = ['decoding', 'transcribing'].includes(status)
   const hasResults = status === 'analyzed' && harmony
+  // Analysis finished but the riff had too few distinct notes to rank keys
+  const notEnoughNotes = hasResults && harmony.candidates.length === 0
 
   // Cleanup drone when component unmounts or harmony changes
   useEffect(() => {
@@ -111,7 +113,7 @@ export function HarmonicFieldsPanel() {
         <h2 className="text-sm font-semibold uppercase tracking-wider text-stone-400">
           Detected Keys / Modes
         </h2>
-        {hasResults && (
+        {hasResults && !notEnoughNotes && (
           <span className="ml-auto text-xs text-stone-500">
             {harmony.candidates.length} candidates
           </span>
@@ -119,7 +121,7 @@ export function HarmonicFieldsPanel() {
       </div>
 
       {/* Hint about drone feature */}
-      {hasResults && recording?.audioUrl && (
+      {hasResults && !notEnoughNotes && recording?.audioUrl && (
         <div className="mb-3 rounded-lg bg-stone-800/30 px-3 py-2 text-xs text-stone-500">
           <span className="text-violet-400">Tip:</span> Click "Drone" to play your recording with a
           tonic bass note underneath
@@ -129,6 +131,14 @@ export function HarmonicFieldsPanel() {
       {isLoading ? (
         <div className="flex min-h-[120px] items-center justify-center">
           <div className="h-6 w-6 animate-spin rounded-full border-2 border-stone-600 border-t-violet-500" />
+        </div>
+      ) : notEnoughNotes ? (
+        <div className="flex min-h-[120px] flex-col items-center justify-center rounded-xl border border-dashed border-stone-700/50 bg-stone-950/30 p-6">
+          <MusicNoteIcon className="mb-2 h-8 w-8 text-stone-700" />
+          <p className="text-center text-sm text-stone-400">Not enough notes to detect a key</p>
+          <p className="mt-1 text-center text-xs text-stone-600">
+            Try recording a longer riff with at least two different notes
+          </p>
         </div>
       ) : hasResults ? (
         <div className="space-y-3">
