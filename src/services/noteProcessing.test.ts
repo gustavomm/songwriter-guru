@@ -8,6 +8,7 @@ import {
   concatenatePitchBends,
   hasSignificantPitchBend,
   filterIsolatedNoiseNotes,
+  suppressOvertones,
   DEFAULT_MAX_POLYPHONY,
   DEFAULT_MERGE_TIME_THRESHOLD,
   ISOLATED_NOTE_THRESHOLD,
@@ -474,6 +475,68 @@ describe('noteProcessing', () => {
       const result = smartMergeNotes(notes)
       expect(result.length).toBe(1)
       expect(result[0].endSec).toBe(1.5)
+    })
+  })
+
+  describe('suppressOvertones', () => {
+    it('drops the 5th-harmonic G# of a ringing low E', () => {
+      const lowE = createNote(0, 2, 40, 0.9)
+      const ghostGSharp = createNote(0.02, 1.5, 68, 0.4) // E2 + 28 semitones
+      expect(suppressOvertones([lowE, ghostGSharp])).toEqual([lowE])
+    })
+
+    it.each([12, 19, 24, 28])(
+      'drops a quieter note %i semitones above a louder one',
+      (interval) => {
+        const fundamental = createNote(0, 1, 45, 0.8)
+        const overtone = createNote(0.03, 0.9, 45 + interval, 0.5)
+        expect(suppressOvertones([fundamental, overtone])).toEqual([fundamental])
+      }
+    )
+
+    it('drops an overtone that appears while the louder note is still ringing', () => {
+      const fundamental = createNote(0, 2, 45, 0.8)
+      const overtone = createNote(0.5, 1.8, 57, 0.4)
+      expect(suppressOvertones([fundamental, overtone])).toEqual([fundamental])
+    })
+
+    it('keeps notes at non-harmonic intervals', () => {
+      const root = createNote(0, 1, 40, 0.9)
+      const fifth = createNote(0, 1, 47, 0.3) // power-chord fifth (7 semitones)
+      const tenth = createNote(0, 1, 56, 0.3) // 16 semitones
+      expect(suppressOvertones([root, fifth, tenth])).toHaveLength(3)
+    })
+
+    it('keeps an upper note that is about as loud as the lower one', () => {
+      // Octave shape: both strings picked
+      const low = createNote(0, 1, 45, 0.7)
+      const high = createNote(0, 1, 57, 0.6) // 0.6 >= 0.8 × 0.7
+      expect(suppressOvertones([low, high])).toHaveLength(2)
+    })
+
+    it('keeps an upper note that starts after the lower note has ended', () => {
+      const low = createNote(0, 0.5, 45, 0.9)
+      const high = createNote(0.6, 1, 57, 0.3)
+      expect(suppressOvertones([low, high])).toHaveLength(2)
+    })
+
+    it('keeps an upper note that clearly outlasts the lower note', () => {
+      // A melody note played over a short low note is not a harmonic of it
+      const low = createNote(0, 0.5, 45, 0.9)
+      const melody = createNote(0.02, 2, 57, 0.4)
+      expect(suppressOvertones([low, melody])).toHaveLength(2)
+    })
+
+    it('never drops the lower (louder) note', () => {
+      const low = createNote(0, 1, 40, 0.3)
+      const high = createNote(0, 1, 52, 0.9)
+      expect(suppressOvertones([low, high])).toEqual([low, high])
+    })
+
+    it('returns empty and single-note input unchanged', () => {
+      expect(suppressOvertones([])).toEqual([])
+      const single = [createNote(0, 1, 60)]
+      expect(suppressOvertones(single)).toBe(single)
     })
   })
 })
