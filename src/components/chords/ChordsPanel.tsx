@@ -1,6 +1,8 @@
 import { useState, useCallback, useRef, useMemo } from 'react'
 import { useAppDispatch, useAppState } from '../../domain/state'
+import { findVoicings } from '../../services/chordVoicings'
 import { midiPlayer } from '../../services/midiPlayer'
+import { strum } from '../fretboard/strum'
 import { GridIcon } from '../icons'
 import { ChordCard } from './ChordCard'
 import { ChordTabs, type TabId } from './ChordTabs'
@@ -45,7 +47,9 @@ export function ChordsPanel() {
         type: 'FOCUS_CHORD',
         payload: { symbol: chord.symbol, roman: chord.roman, chordTones: chord.chordTones },
       })
-      midiPlayer.playChord(chord.chordTones, 3, 800, 0.4)
+      const [shape] = findVoicings(chord.chordTones, { limit: 1 })
+      if (shape) strum(shape.midi)
+      else midiPlayer.playChord(chord.chordTones, 3, 800, 0.4)
 
       // Clear playing state after chord duration
       playingTimeoutRef.current = window.setTimeout(() => {
@@ -77,7 +81,7 @@ export function ChordsPanel() {
           <ChordTabs activeTab={activeTab} onTabChange={setActiveTab} />
 
           {/* Chord Grid */}
-          <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
             {visibleChords.map((chord) => (
               <ChordCard
                 key={chord.id}

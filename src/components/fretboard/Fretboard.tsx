@@ -1,8 +1,27 @@
 import { memo, useMemo } from 'react'
+import type { Barre } from '../../services/chordVoicings'
 import { INLAY_FRETS, STANDARD_TUNING, type FretNote } from '../../services/fretboard'
 import { degreeColor } from './degreeColors'
+import {
+  BOARD_BOTTOM,
+  END_X,
+  fretX,
+  HEIGHT,
+  NUT_X,
+  noteX,
+  OPEN_ZONE,
+  RIFF_THRESHOLD,
+  STRING_COUNT,
+  STRING_GAP,
+  stringY,
+  TOP,
+  WIDTH,
+} from './geometry'
 
 export type LabelMode = 'notes' | 'intervals'
+
+/** With a chord shape picked: the shape alone, plus the chord's other tones, or plus the scale */
+export type ChordLayer = 'shape' | 'tones' | 'scale'
 
 interface FretboardProps {
   notes: FretNote[]
@@ -10,39 +29,15 @@ interface FretboardProps {
   labelMode: LabelMode
   /** True when a chord is focused: chord tones stand out, other scale notes recede */
   hasChord: boolean
+  /** Fret per string (low E first, null = muted) of the chord shape to highlight */
+  shape: (number | null)[] | null
+  /** Barre of that shape, drawn as a bar under the dots */
+  barre?: Barre | null
+  chordLayer: ChordLayer
   showRiff: boolean
   /** Key of the position currently sounding ("string-fret"), for a pulse */
   pulseKey: string | null
   onNoteClick: (note: FretNote) => void
-}
-
-// Geometry (SVG user units)
-const WIDTH = 1000
-const OPEN_ZONE = 46
-const NUT_X = OPEN_ZONE + 4
-const END_X = WIDTH - 12
-const TOP = 22
-const STRING_GAP = 30
-const STRING_COUNT = STANDARD_TUNING.length
-const BOARD_BOTTOM = TOP + (STRING_COUNT - 1) * STRING_GAP
-const HEIGHT = BOARD_BOTTOM + 48
-const RIFF_THRESHOLD = 0.12
-
-/** Fret wire x position: real guitar spacing blended with equal spacing for readability */
-function fretX(fret: number, fretCount: number): number {
-  const real = (1 - Math.pow(2, -fret / 12)) / (1 - Math.pow(2, -fretCount / 12))
-  const equal = fret / fretCount
-  return NUT_X + (END_X - NUT_X) * (0.6 * real + 0.4 * equal)
-}
-
-function noteX(fret: number, fretCount: number): number {
-  if (fret === 0) return OPEN_ZONE / 2
-  return (fretX(fret - 1, fretCount) + fretX(fret, fretCount)) / 2
-}
-
-/** String 0 is the low E, drawn at the bottom like a tab */
-function stringY(string: number): number {
-  return TOP + (STRING_COUNT - 1 - string) * STRING_GAP
 }
 
 export const Fretboard = memo(function Fretboard({
@@ -50,10 +45,16 @@ export const Fretboard = memo(function Fretboard({
   fretCount,
   labelMode,
   hasChord,
+  shape,
+  barre,
+  chordLayer,
   showRiff,
   pulseKey,
   onNoteClick,
 }: FretboardProps) {
+  const shapeFrets = shape?.filter((f): f is number => f !== null && f > 0) ?? []
+  const handFrom = shapeFrets.length ? Math.min(...shapeFrets) : null
+  const handTo = shapeFrets.length ? Math.max(...shapeFrets) : null
   const frets = useMemo(() => Array.from({ length: fretCount + 1 }, (_, i) => i), [fretCount])
   const inlays: number[] = INLAY_FRETS.filter((f) => f <= fretCount)
   const midY = (TOP + BOARD_BOTTOM) / 2
@@ -82,6 +83,18 @@ export const Fretboard = memo(function Fretboard({
         fill="url(#fretboard-wood)"
         stroke="#44403c"
       />
+
+      {/* Where the hand sits for the chosen shape */}
+      {handFrom !== null && handTo !== null && (
+        <rect
+          x={fretX(handFrom - 1, fretCount)}
+          y={TOP - 14}
+          width={fretX(handTo, fretCount) - fretX(handFrom - 1, fretCount)}
+          height={BOARD_BOTTOM - TOP + 28}
+          fill="#fafaf9"
+          opacity={0.06}
+        />
+      )}
 
       {/* Inlays */}
       {inlays.map((fret) => {
@@ -139,6 +152,37 @@ export const Fretboard = memo(function Fretboard({
         </text>
       ))}
 
+      {/* Barre of the chosen shape */}
+      {barre && (
+        <rect
+          x={noteX(barre.fret, fretCount) - 9}
+          y={stringY(barre.toString) - 9}
+          width={18}
+          height={stringY(barre.fromString) - stringY(barre.toString) + 18}
+          rx={9}
+          fill="#e7e5e4"
+          opacity={0.3}
+        />
+      )}
+
+      {/* Muted strings of the chosen shape */}
+      {shape?.map((fret, string) =>
+        fret === null ? (
+          <text
+            key={string}
+            x={OPEN_ZONE / 2}
+            y={stringY(string)}
+            dy="0.35em"
+            textAnchor="middle"
+            fontSize={16}
+            fill="#78716c"
+            aria-label={`string ${6 - string} not played`}
+          >
+            ×
+          </text>
+        ) : null
+      )}
+
       {/* Notes */}
       {notes.map((note) => (
         <NoteDot
@@ -148,6 +192,9 @@ export const Fretboard = memo(function Fretboard({
           y={stringY(note.string)}
           labelMode={labelMode}
           hasChord={hasChord}
+          inShape={shape ? shape[note.string] === note.fret : false}
+          hasShape={Boolean(shape)}
+          chordLayer={chordLayer}
           showRiff={showRiff}
           isPulsing={pulseKey === `${note.string}-${note.fret}`}
           onClick={onNoteClick}
@@ -163,26 +210,63 @@ interface NoteDotProps {
   y: number
   labelMode: LabelMode
   hasChord: boolean
+  inShape: boolean
+  hasShape: boolean
+  chordLayer: ChordLayer
   showRiff: boolean
   isPulsing: boolean
   onClick: (note: FretNote) => void
 }
 
-function NoteDot({ note, x, y, labelMode, hasChord, showRiff, isPulsing, onClick }: NoteDotProps) {
-  const inRiff = showRiff && note.riffWeight >= RIFF_THRESHOLD
-  // Hide notes that are only here because of a faint riff weight we are not showing
-  if (!note.inScale && !note.isChordTone && !inRiff) return null
+function NoteDot({
+  note,
+  x,
+  y,
+  labelMode,
+  hasChord,
+  inShape,
+  hasShape,
+  chordLayer,
+  showRiff,
+  isPulsing,
+  onClick,
+}: NoteDotProps) {
+  // Riff rings belong to the scale view; with a chord shape they would only add noise
+  const inRiff =
+    showRiff && note.riffWeight >= RIFF_THRESHOLD && (!hasShape || chordLayer === 'scale')
 
-  // With a chord focused, chord tones are coloured by their role in the chord
-  const prominent = hasChord ? note.isChordTone : note.inScale
+  // How loudly to draw this note: full dot, coloured outline, faint dot, or not at all
+  let emphasis: 'full' | 'outline' | 'faint' | null
+  if (hasShape) {
+    if (inShape) emphasis = 'full'
+    else if (note.isChordTone && chordLayer !== 'shape') emphasis = 'outline'
+    else if (note.inScale && chordLayer === 'scale') emphasis = 'faint'
+    else emphasis = inRiff ? 'faint' : null
+  } else if (hasChord) {
+    emphasis = note.isChordTone ? 'full' : note.inScale || inRiff ? 'faint' : null
+  } else {
+    emphasis = note.inScale ? 'full' : inRiff ? 'faint' : null
+  }
+  if (!emphasis) return null
+
+  // With a chord focused, notes are coloured and labelled by their role in the chord
   const colorLabel = hasChord ? note.chordInterval : note.interval
   const color = degreeColor(colorLabel)
-  const label = labelMode === 'notes' ? note.name : hasChord ? note.chordInterval : note.interval
+  const label = labelMode === 'notes' ? note.name : colorLabel
 
-  const radius = prominent ? 11 : 8
-  const fill = prominent ? color.fill : '#292524'
-  const textColor = prominent ? color.text : '#a8a29e'
-  const opacity = prominent ? 1 : note.inScale ? 0.85 : 0.7
+  const radius = emphasis === 'full' ? 11 : emphasis === 'outline' ? 9 : 8
+  const fill = emphasis === 'full' ? color.fill : '#292524'
+  const textColor =
+    emphasis === 'full' ? color.text : emphasis === 'outline' ? color.fill : '#a8a29e'
+  const stroke =
+    emphasis === 'full'
+      ? 'none'
+      : emphasis === 'outline'
+        ? color.fill
+        : note.inScale
+          ? '#57534e'
+          : '#78716c'
+  const opacity = emphasis === 'faint' ? (note.inScale ? 0.8 : 0.7) : 1
 
   return (
     <g
@@ -224,7 +308,8 @@ function NoteDot({ note, x, y, labelMode, hasChord, showRiff, isPulsing, onClick
         cy={y}
         r={radius}
         fill={fill}
-        stroke={prominent ? 'none' : note.inScale ? '#57534e' : '#78716c'}
+        stroke={stroke}
+        strokeWidth={emphasis === 'outline' ? 1.5 : 1}
         strokeDasharray={!note.inScale && !note.isChordTone ? '2 2' : undefined}
       />
       <text
@@ -232,7 +317,7 @@ function NoteDot({ note, x, y, labelMode, hasChord, showRiff, isPulsing, onClick
         y={y}
         dy="0.35em"
         textAnchor="middle"
-        fontSize={prominent ? 10 : 8}
+        fontSize={emphasis === 'full' ? 10 : 8}
         fontWeight={700}
         fill={textColor}
         pointerEvents="none"
