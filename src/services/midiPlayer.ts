@@ -1,14 +1,18 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// Simple MIDI Note Player using Web Audio API
+// MIDI Note Player using Web Audio API
+// Notes play as a sampled electric guitar through the amp in guitarRig.ts; the simple
+// oscillator synth covers the drone and any note played before the samples finish loading.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { midiToFrequency, noteNameToMidi, chordNotesToMidi } from './noteUtils'
+import { GuitarRig } from './guitarRig'
+import { loadTone, sanitizeTone, saveTone, type ToneSettings } from './guitarTone'
 
-/**
- * Simple synth using Web Audio API oscillator + envelope
- */
 class MidiPlayer {
   private audioContext: AudioContext | null = null
+  private guitar: GuitarRig | null = null
+  private tone: ToneSettings = loadTone()
+  private toneListeners = new Set<() => void>()
   private masterGain: GainNode | null = null
   private compressor: DynamicsCompressorNode | null = null
   // Reserved for future note-off functionality
@@ -39,8 +43,43 @@ class MidiPlayer {
       // Chain: sources -> masterGain -> compressor -> destination
       this.masterGain.connect(this.compressor)
       this.compressor.connect(this.audioContext.destination)
+
+      this.guitar = new GuitarRig(this.audioContext)
+      this.guitar.apply(this.tone)
+      this.guitar.load().catch(() => {
+        // Keep the synth fallback; the next play retries
+      })
+    }
+    if (this.audioContext.state === 'suspended') {
+      this.audioContext.resume().catch(() => {})
     }
     return this.audioContext
+  }
+
+  /**
+   * Create the audio context and start loading the guitar samples. Call from a user gesture
+   * (e.g. the first tap on the page) so the first note already sounds like a guitar.
+   */
+  warmUp(): void {
+    this.getContext()
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // Guitar tone
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  getTone = (): ToneSettings => this.tone
+
+  setTone(changes: Partial<ToneSettings>): void {
+    this.tone = sanitizeTone({ ...this.tone, ...changes })
+    saveTone(this.tone)
+    this.guitar?.apply(this.tone)
+    this.toneListeners.forEach((l) => l())
+  }
+
+  subscribeTone = (listener: () => void): (() => void) => {
+    this.toneListeners.add(listener)
+    return () => this.toneListeners.delete(listener)
   }
 
   /**
@@ -56,6 +95,15 @@ class MidiPlayer {
    */
   playNote(midi: number, durationMs: number = 300, velocity: number = 0.5): void {
     const ctx = this.getContext()
+    if (this.guitar?.isLoaded && this.guitar.playNote(midi, durationMs, velocity)) return
+    if (this.guitar && !this.guitar.isLoaded) {
+      this.guitar.load().catch(() => {})
+    }
+    this.playSynthNote(ctx, midi, durationMs, velocity)
+  }
+
+  /** The original oscillator voice, used until the guitar samples are ready */
+  private playSynthNote(ctx: AudioContext, midi: number, durationMs: number, velocity: number) {
     const masterOutput = this.getMasterOutput()
     const freq = midiToFrequency(midi)
 
