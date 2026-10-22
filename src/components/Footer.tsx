@@ -25,6 +25,26 @@ export function Footer() {
             Gustavo Moreira
           </a>
         </p>
+        <p className="mt-1 text-center text-xs text-stone-700">
+          Guitar samples by Karoryfer Samples via{' '}
+          <a
+            href="https://github.com/nbrosowsky/tonejs-instruments"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-stone-500 transition-colors hover:text-amber-500"
+          >
+            tonejs-instruments
+          </a>
+          ,{' '}
+          <a
+            href="https://creativecommons.org/licenses/by/3.0/"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-stone-500 transition-colors hover:text-amber-500"
+          >
+            CC BY 3.0
+          </a>
+        </p>
       </div>
     </footer>
   )
