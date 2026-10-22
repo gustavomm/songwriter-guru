@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef, useMemo } from 'react'
-import { useAppState } from '../../domain/state'
+import { useAppDispatch, useAppState } from '../../domain/state'
 import { midiPlayer } from '../../services/midiPlayer'
 import { GridIcon } from '../icons'
 import { ChordCard } from './ChordCard'
@@ -7,7 +7,8 @@ import { ChordTabs, type TabId } from './ChordTabs'
 import type { ChordSuggestion } from '../../domain/types'
 
 export function ChordsPanel() {
-  const { status, chords } = useAppState()
+  const { status, chords, focusedChord } = useAppState()
+  const dispatch = useAppDispatch()
   const [activeTab, setActiveTab] = useState<TabId>('all')
   const [playingChordSymbol, setPlayingChordSymbol] = useState<string | null>(null)
   const playingTimeoutRef = useRef<number | null>(null)
@@ -31,21 +32,29 @@ export function ChordsPanel() {
   }, [chords, activeTab])
 
   // Handle playing a chord
-  const handlePlayChord = useCallback((chord: ChordSuggestion) => {
-    // Clear any existing timeout to prevent it from clearing the new playing state
-    if (playingTimeoutRef.current !== null) {
-      clearTimeout(playingTimeoutRef.current)
-    }
+  const handlePlayChord = useCallback(
+    (chord: ChordSuggestion) => {
+      // Clear any existing timeout to prevent it from clearing the new playing state
+      if (playingTimeoutRef.current !== null) {
+        clearTimeout(playingTimeoutRef.current)
+      }
 
-    setPlayingChordSymbol(chord.symbol)
-    midiPlayer.playChord(chord.chordTones, 3, 800, 0.4)
+      setPlayingChordSymbol(chord.symbol)
+      // Light the chord up on the fretboard
+      dispatch({
+        type: 'FOCUS_CHORD',
+        payload: { symbol: chord.symbol, roman: chord.roman, chordTones: chord.chordTones },
+      })
+      midiPlayer.playChord(chord.chordTones, 3, 800, 0.4)
 
-    // Clear playing state after chord duration
-    playingTimeoutRef.current = window.setTimeout(() => {
-      setPlayingChordSymbol(null)
-      playingTimeoutRef.current = null
-    }, 900)
-  }, [])
+      // Clear playing state after chord duration
+      playingTimeoutRef.current = window.setTimeout(() => {
+        setPlayingChordSymbol(null)
+        playingTimeoutRef.current = null
+      }, 900)
+    },
+    [dispatch]
+  )
 
   return (
     <div className="rounded-2xl border border-stone-800 bg-gradient-to-b from-stone-900 to-stone-900/50 p-5 shadow-xl shadow-black/20">
@@ -74,6 +83,7 @@ export function ChordsPanel() {
                 key={chord.id}
                 chord={chord}
                 isPlaying={playingChordSymbol === chord.symbol}
+                isFocused={focusedChord?.symbol === chord.symbol}
                 onPlay={() => handlePlayChord(chord)}
               />
             ))}

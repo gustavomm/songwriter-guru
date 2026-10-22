@@ -5,6 +5,7 @@ import { RecorderCard } from '../components/recorder'
 import { HarmonicFieldsPanel } from '../components/harmony'
 import { ChordsPanel } from '../components/chords'
 import { ProgressionsPanel } from '../components/progressions'
+import { FretboardPanel } from '../components/fretboard'
 import { AppProvider, mockAnalyzedState, useAppState } from '../domain/state'
 import { transcriptionService } from '../services/transcriptionService'
 
@@ -32,6 +33,11 @@ function MainContent() {
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
           <RecorderCard />
           <HarmonicFieldsPanel />
+        </div>
+
+        {/* Fretboard: the detected key on the neck, driven by the panels around it */}
+        <div className="mt-6">
+          <FretboardPanel />
         </div>
 
         {/* Bottom section: Chords + Progressions (full width after analysis) */}

@@ -25,16 +25,25 @@ const sourceLabels: Record<ChordSource, string> = {
 interface ChordCardProps {
   chord: ChordSuggestion
   isPlaying: boolean
+  /** Shown on the fretboard */
+  isFocused?: boolean
   onPlay: () => void
 }
 
-export const ChordCard = memo(function ChordCard({ chord, isPlaying, onPlay }: ChordCardProps) {
+export const ChordCard = memo(function ChordCard({
+  chord,
+  isPlaying,
+  isFocused = false,
+  onPlay,
+}: ChordCardProps) {
   return (
     <div
       className={`group rounded-xl border p-3 transition-all ${
         isPlaying
           ? 'border-amber-500/50 bg-amber-500/10 ring-1 ring-amber-500/30'
-          : 'border-stone-700/50 bg-stone-950/30 hover:border-stone-600 hover:bg-stone-900/50'
+          : isFocused
+            ? 'border-rose-400/50 bg-stone-950/30 ring-1 ring-rose-400/30'
+            : 'border-stone-700/50 bg-stone-950/30 hover:border-stone-600 hover:bg-stone-900/50'
       }`}
     >
       <div className="mb-2 flex flex-wrap items-start justify-between gap-2">
@@ -47,7 +56,7 @@ export const ChordCard = memo(function ChordCard({ chord, isPlaying, onPlay }: C
                 ? 'bg-amber-500/30 text-amber-400'
                 : 'bg-stone-800/80 text-stone-400 hover:bg-stone-700/80 hover:text-stone-300'
             }`}
-            title="Play chord"
+            title="Play chord and show it on the fretboard"
           >
             <PlayIcon className="h-3 w-3" />
           </button>

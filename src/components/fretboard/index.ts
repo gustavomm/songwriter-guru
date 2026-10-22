@@ -1,0 +1,1 @@
+export { FretboardPanel } from './FretboardPanel'

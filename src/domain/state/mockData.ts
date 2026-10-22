@@ -365,4 +365,5 @@ export const mockAnalyzedState: AppState = {
   harmony: mockHarmony,
   chords: mockChords,
   progressions: mockProgressions,
+  focusedChord: null,
 }
