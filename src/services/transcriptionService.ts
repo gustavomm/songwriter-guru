@@ -20,6 +20,7 @@ import {
   limitPolyphony,
   smartMergeNotes,
   filterIsolatedNoiseNotes,
+  suppressOvertones,
   DEFAULT_MAX_POLYPHONY,
 } from './noteProcessing'
 import {
@@ -502,7 +503,8 @@ class TranscriptionServiceImpl {
  *
  * Processing pipeline:
  * 1. Convert to our TranscribedNote format
- * 2. Snap note start times to detected onsets (improved timing)
+ * 2. Snap note start times to detected onsets (improved timing), then drop
+ *    overtone ghost notes of louder lower notes
  * 3. Filter isolated noise notes (weak notes with no neighbors)
  * 4. Apply polyphony limit (max 6 simultaneous notes for guitar)
  * 5. Smart merge with pitch bend awareness
@@ -528,6 +530,10 @@ function convertToTranscribedNotes(
   if (detectedOnsets.length > 0) {
     notes = snapNotesToOnsets(notes, detectedOnsets, 0.03) // 30ms snap window
   }
+
+  // Step 2b: Drop overtone ghost notes (quieter notes an octave, octave + 5th,
+  // two octaves or two octaves + 3rd above a ringing louder note)
+  notes = suppressOvertones(notes)
 
   // Step 3: Filter isolated noise notes (weak notes far from other notes)
   const noiseFiltered = filterIsolatedNoiseNotes(notes)
