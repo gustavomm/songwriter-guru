@@ -29,6 +29,12 @@ const ENDING_BONUS = 0.05 // Bonus if last note is tonic
 const BASS_BONUS = 0.03 // Bonus if bass note is tonic
 const OUT_OF_SCALE_THRESHOLD = 0.05 // Min weight to report as out-of-scale
 const TOP_CANDIDATES_COUNT = 8 // Number of candidates to return
+const MIN_PC_WEIGHT = 0.01 // Min weight for a pitch class to count as played
+const MIN_DISTINCT_PCS = 2 // Fewer distinct pitch classes than this: no key can be inferred
+
+// Minor-key chromatic degrees (semitones above the tonic) from harmonic/melodic minor
+const MINOR_LEADING_TONE = 11 // Raised 7th (G# in A minor): counted as in-scale
+const MINOR_RAISED_SIXTH = 9 // Raised 6th (F# in A minor): reported, but not penalized
 
 /**
  * Highest achievable raw score: every note in scale, all weight on the tonic
@@ -57,6 +63,12 @@ const CHROMATIC_INTERVALS = ['1P', '2m', '2M', '3m', '3M', '4P', '4A', '5P', '6m
 export function analyzeHarmony(features: RiffFeatures): HarmonyAnalysisResult {
   const { pcWeights, lastNotePc, bassPc } = features
 
+  // Not enough material to infer a key (no notes, or a single repeated pitch
+  // class): return no candidates rather than an arbitrary C major
+  if (!hasEnoughPitchMaterial(pcWeights)) {
+    return { candidates: [], selectedCandidateId: '' }
+  }
+
   const scored: ScoredCandidate[] = []
 
   // Evaluate all 24 candidates
@@ -77,6 +89,13 @@ export function analyzeHarmony(features: RiffFeatures): HarmonyAnalysisResult {
     candidates: topCandidates,
     selectedCandidateId: topCandidates[0]?.id ?? '',
   }
+}
+
+/**
+ * Whether the riff has enough distinct pitch classes to rank keys at all.
+ */
+export function hasEnoughPitchMaterial(pcWeights: readonly number[]): boolean {
+  return pcWeights.filter((weight) => weight > MIN_PC_WEIGHT).length >= MIN_DISTINCT_PCS
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -100,6 +119,11 @@ interface ScoredCandidate {
  * all seven notes): the candidate whose tonic and tonic triad the riff
  * emphasizes ranks higher. The display fitScore is the raw score divided by
  * the maximum achievable raw score, so it stays in 0-1 without clamping.
+ *
+ * Minor candidates follow common practice rather than strict natural minor:
+ * the raised 7th (harmonic minor leading tone) counts as in-scale, and the
+ * raised 6th (melodic minor) is neither rewarded nor penalized (it is still
+ * reported in outOfScale).
  */
 function scoreCandidate(
   tonic: string,
@@ -124,12 +148,19 @@ function scoreCandidate(
   let outScaleWeight = 0
   const outOfScale: { note: string; weight: number }[] = []
 
+  const isMinor = mode.name === 'minor'
+
   for (let pc = 0; pc < 12; pc++) {
     const weight = pcWeights[pc]
     if (weight === 0) continue
 
-    if (scalePCs.has(pc)) {
+    const degree = (pc - tonicPC + 12) % 12
+    if (scalePCs.has(pc) || (isMinor && degree === MINOR_LEADING_TONE)) {
       inScaleWeight += weight
+    } else if (isMinor && degree === MINOR_RAISED_SIXTH) {
+      if (weight >= OUT_OF_SCALE_THRESHOLD) {
+        outOfScale.push({ note: spellPitchClassInKey(pc, tonic, tonicPC), weight })
+      }
     } else {
       outScaleWeight += weight
       if (weight >= OUT_OF_SCALE_THRESHOLD) {
@@ -142,7 +173,7 @@ function scoreCandidate(
   outOfScale.sort((a, b) => b.weight - a.weight)
 
   // Tonal-center evidence: weight on the tonic and on the tonic triad (1-3-5)
-  const thirdPC = (tonicPC + (mode.name === 'minor' ? 3 : 4)) % 12
+  const thirdPC = (tonicPC + (isMinor ? 3 : 4)) % 12
   const fifthPC = (tonicPC + 7) % 12
   const tonicWeight = pcWeights[tonicPC]
   const triadWeight = tonicWeight + pcWeights[thirdPC] + pcWeights[fifthPC]

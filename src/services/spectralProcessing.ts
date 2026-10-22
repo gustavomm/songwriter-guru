@@ -20,6 +20,10 @@ const SPECTRAL_FLOOR = 0.15 // Minimum spectral magnitude (max 16dB attenuation)
 const OVERSUBTRACTION_FACTOR = 0.8 // Subtract less than estimated noise (conservative)
 const SMOOTHING_FACTOR = 0.15 // Light temporal smoothing to preserve transients
 
+// Noise reduction decision thresholds
+const NR_NOISE_FLOOR_THRESHOLD_DB = -40 // Only consider NR above this noise floor
+const NR_MAX_SNR_DB = 20 // Only apply NR when SNR (RMS - noise floor) is below this
+
 // ─────────────────────────────────────────────────────────────────────────────
 // FFT Implementation
 // ─────────────────────────────────────────────────────────────────────────────
@@ -344,9 +348,22 @@ export function estimateNoiseProfile(
  * Check if spectral noise reduction would be beneficial for the audio.
  * Returns true if the signal appears noisy enough to warrant processing.
  * Uses a conservative threshold to avoid processing clean signals.
+ *
+ * When the overall RMS level is given, also requires a low SNR (RMS minus
+ * noise floor): a loud, clean recording can have a high "noise floor" simply
+ * because its quietest frames still contain sustained notes.
  */
-export function shouldApplyNoiseReduction(_audioData: Float32Array, noiseFloorDb: number): boolean {
+export function shouldApplyNoiseReduction(
+  _audioData: Float32Array,
+  noiseFloorDb: number,
+  rmsLevelDb?: number
+): boolean {
   // Only apply NR if noise floor is quite high (above -40dB)
   // This avoids processing relatively clean signals
-  return noiseFloorDb > -40
+  if (noiseFloorDb <= NR_NOISE_FLOOR_THRESHOLD_DB) return false
+
+  // Require evidence of real noise: signal not far above the floor
+  if (rmsLevelDb !== undefined && rmsLevelDb - noiseFloorDb >= NR_MAX_SNR_DB) return false
+
+  return true
 }

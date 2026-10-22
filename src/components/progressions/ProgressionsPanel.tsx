@@ -26,6 +26,8 @@ export function ProgressionsPanel() {
 
   const isLoading = ['decoding', 'transcribing'].includes(status)
   const hasResults = status === 'analyzed' && progressions && progressions.length > 0
+  // Analysis finished without a key (too few notes): no progressions were generated
+  const notEnoughNotes = status === 'analyzed' && !!harmony && harmony.candidates.length === 0
 
   // Memoize selected harmonic field candidate to avoid recalculating on every render
   const selectedCandidate = useMemo(
@@ -172,7 +174,9 @@ export function ProgressionsPanel() {
         <div className="flex min-h-[120px] flex-col items-center justify-center rounded-xl border border-dashed border-stone-700/50 bg-stone-950/30 p-6">
           <ChartIcon className="mb-2 h-8 w-8 text-stone-700" />
           <p className="text-center text-sm text-stone-600">
-            Suggested chord progressions will appear here
+            {notEnoughNotes
+              ? 'Not enough notes to detect a key, so no progressions to suggest'
+              : 'Suggested chord progressions will appear here'}
           </p>
         </div>
       )}

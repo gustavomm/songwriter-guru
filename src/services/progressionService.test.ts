@@ -8,6 +8,7 @@ import {
   scoreSubstituteResolution,
   isValidTransition,
   getResolutionTarget,
+  scoreCadence,
   type ProgressionScoreComponents,
 } from './progressionService'
 import { generateChordSuggestions } from './chordSuggestion'
@@ -218,12 +219,16 @@ describe('progressionService', () => {
       // Find progressions marked as containing borrowed chords
       const withBorrowed = progressions.filter((p) => p.containsBorrowedChord)
 
-      // If we have borrowed progressions, they should have borrowed roman numerals
+      // Borrowed progressions should contain a borrowed chord with a roman
+      // numeral and a harmonic function (every borrowed chord gets one)
+      expect(withBorrowed.length).toBeGreaterThan(0)
       for (const prog of withBorrowed) {
-        const hasBorrowedRoman = prog.romans.some(
-          (r) => r.startsWith('b') || (r === 'iv' && cMajorField.mode === 'Major')
-        )
-        expect(hasBorrowedRoman).toBe(true)
+        const borrowedSlots = prog.slots.filter((slot) => slot.chosen.source === 'borrowed')
+        expect(borrowedSlots.length).toBeGreaterThan(0)
+        for (const slot of borrowedSlots) {
+          expect(slot.chosen.roman).toBeTruthy()
+          expect(slot.chosen.function).toBeDefined()
+        }
       }
     })
 
@@ -512,6 +517,171 @@ describe('progressionService', () => {
   // ─────────────────────────────────────────────────────────────────────────────
   // Golden Musical Tests (full pipeline: notes → features → key → chords)
   // ─────────────────────────────────────────────────────────────────────────────
+
+  describe('quality-aware resolution (minor keys)', () => {
+    const chord = (symbol: string, roman: string, extra: Partial<ChordSuggestion> = {}) =>
+      ({
+        id: symbol,
+        symbol,
+        roman,
+        source: 'diatonic',
+        chordTones: Chord.get(symbol).notes,
+        supportScore: 0.5,
+        colorScore: 0.2,
+        ...extra,
+      }) as ChordSuggestion
+    const vOfV = chord('B7', 'V/V', { source: 'secondary_dominant', resolvesToRoman: 'V' })
+
+    it('requires V/V to resolve to the major V, not the minor v', () => {
+      expect(isValidTransition(vOfV, chord('E7', 'V7'))).toBe(true)
+      expect(isValidTransition(vOfV, chord('E', 'V'))).toBe(true)
+      expect(isValidTransition(vOfV, chord('Em', 'v'))).toBe(false)
+      expect(isValidTransition(vOfV, chord('Em7', 'v7'))).toBe(false)
+    })
+
+    it('scores V/V → v as a wrong resolution', () => {
+      expect(scoreAppliedChordResolution('V/V', 'V7')).toBeGreaterThan(0)
+      expect(scoreAppliedChordResolution('V/V', 'v')).toBeLessThan(0)
+    })
+
+    it('expects the Neapolitan to resolve to the major V', () => {
+      expect(scoreNeapolitanResolution('bII', 'V7')).toBeGreaterThan(0)
+      expect(scoreNeapolitanResolution('bII', 'v')).toBeLessThan(0)
+    })
+  })
+
+  describe('scoreCadence', () => {
+    const chord = (
+      symbol: string,
+      roman: string,
+      fn: ChordSuggestion['function'],
+      extra: Partial<ChordSuggestion> = {}
+    ) =>
+      ({
+        id: Chord.get(symbol).symbol || symbol,
+        symbol,
+        roman,
+        function: fn,
+        source: 'diatonic',
+        chordTones: Chord.get(symbol).notes,
+        supportScore: 0.5,
+        colorScore: 0.2,
+        ...extra,
+      }) as ChordSuggestion
+    const C = chord('C', 'I', 'T')
+    const F = chord('F', 'IV', 'SD')
+    const G7 = chord('G7', 'V7', 'D')
+    const Bdim = chord('Bdim', 'vii°', 'D')
+    const Em7 = chord('Em7', 'iii7', 'T')
+    const Am = chord('Am', 'vi', 'T')
+    const subVofIII = chord('F7', 'subV/iii', 'D', {
+      source: 'substitute_dominant',
+      resolvesToRoman: 'iii',
+    })
+    const Bb = chord('Bb', 'bVII', 'D', { source: 'borrowed' })
+
+    it('scores V → I and vii° → I as authentic', () => {
+      expect(scoreCadence('authentic', [F, G7, C], 'C')).toBeCloseTo(0.9)
+      expect(scoreCadence('authentic', [F, Bdim, C], 'C')).toBeCloseTo(0.9)
+    })
+
+    it('requires an authentic cadence to end on the tonic chord', () => {
+      // subV/iii → iii is a D → T move, but it doesn't cadence on the tonic
+      const subVToIii = scoreCadence('authentic', [C, subVofIII, Em7], 'C')
+      expect(subVToIii).toBeLessThan(scoreCadence('authentic', [F, G7, C], 'C'))
+      expect(subVToIii).toBeLessThanOrEqual(0.3)
+      // V → vi is deceptive, not authentic
+      expect(scoreCadence('authentic', [F, G7, Am], 'C')).toBeLessThanOrEqual(0.3)
+    })
+
+    it('treats subtonic → tonic as a softer cadence', () => {
+      const soft = scoreCadence('authentic', [F, Bb, C], 'C')
+      expect(soft).toBeLessThan(0.9)
+      expect(soft).toBeGreaterThan(scoreCadence('authentic', [G7, F, C], 'C'))
+
+      // In A minor, VII → i (G → Am) is the natural-minor cadence
+      const am = chord('Am', 'i', 'T')
+      const g = chord('G', 'VII', 'D')
+      const f = chord('F', 'VI', 'SD')
+      expect(scoreCadence('authentic', [f, g, am], 'A')).toBeCloseTo(soft)
+    })
+
+    it('scores a deceptive cadence only when it avoids the tonic', () => {
+      expect(scoreCadence('deceptive', [F, G7, Am], 'C')).toBeCloseTo(0.75)
+      expect(scoreCadence('deceptive', [F, G7, C], 'C')).toBeLessThan(0.75)
+    })
+  })
+
+  describe('key-specific progression behaviour', () => {
+    const buildRiff = (midis: number[]): TranscribedNote[] =>
+      midis.map((midi, i) => ({ startSec: i * 0.5, endSec: i * 0.5 + 0.45, midi, velocity: 0.8 }))
+    const fieldFor = (tonic: string, mode: string): HarmonicFieldCandidate => ({
+      id: `${tonic}-${mode.toLowerCase()}`,
+      tonic,
+      mode,
+      scaleNotes: Scale.get(`${tonic} ${mode.toLowerCase()}`).notes,
+      fitScore: 1,
+      outOfScale: [],
+    })
+    const rootOf = (chord: ChordSuggestion) => Note.chroma(Chord.get(chord.id).tonic ?? '')
+    const aMinor = fieldFor('A', 'Minor')
+    // A C E G F G A E D C A: an A minor riff that leans on the subtonic G
+    const aMinorFeatures = extractFeatures(buildRiff([57, 60, 64, 67, 65, 67, 69, 64, 62, 60, 57]))
+
+    it('includes VII → i (e.g. VI–VII–i) for an A minor riff at low weirdness', () => {
+      const chords = generateChordSuggestions(aMinor, aMinorFeatures)
+      const progressions = generateProgressions(aMinor, chords, aMinorFeatures, 0)
+      const tonic = Note.chroma('A')
+      const subtonic = Note.chroma('G')
+
+      const hasSubtonicCadence = progressions.some((p) =>
+        p.slots.some(
+          (slot, i) =>
+            i < p.slots.length - 1 &&
+            rootOf(slot.chosen) === subtonic &&
+            rootOf(p.slots[i + 1].chosen) === tonic
+        )
+      )
+      expect(hasSubtonicCadence, progressions.map((p) => p.chords.join(' ')).join(' | ')).toBe(true)
+    })
+
+    it('rests on plain i / i7 (not i(maj7), i6 or III+) at low weirdness', () => {
+      // A harmonic minor riff with G#, which makes AmMaj7 a good fit on paper
+      const features = extractFeatures(buildRiff([57, 60, 64, 62, 60, 59, 56, 57, 64, 65, 64, 57]))
+      const chords = generateChordSuggestions(aMinor, features)
+      for (const weirdness of [0, 0.25]) {
+        const progressions = generateProgressions(aMinor, chords, features, weirdness)
+        for (const p of progressions) {
+          for (const slot of p.slots) {
+            if (slot.chosen.function === 'T') {
+              expect(slot.chosen.colorVariant, p.chords.join(' ')).toBeFalsy()
+            }
+          }
+        }
+        // The top suggestion uses no colour variant at all
+        expect(progressions[0].slots.some((slot) => slot.chosen.colorVariant)).toBe(false)
+      }
+    })
+
+    it('drops near-duplicate progressions with the same chord roots', () => {
+      for (const [field, features] of [
+        [aMinor, aMinorFeatures],
+        [
+          fieldFor('C', 'Major'),
+          extractFeatures(buildRiff([60, 64, 67, 65, 62, 67, 71, 72, 69, 67, 64, 60])),
+        ],
+      ] as const) {
+        const chords = generateChordSuggestions(field, features)
+        for (const weirdness of [0, 0.5, 1]) {
+          const progressions = generateProgressions(field, chords, features, weirdness)
+          const rootSequences = progressions.map((p) =>
+            p.slots.map((s) => rootOf(s.chosen)).join('-')
+          )
+          expect(new Set(rootSequences).size).toBe(rootSequences.length)
+        }
+      }
+    })
+  })
 
   describe('golden progressions from real riffs', () => {
     const buildRiff = (midis: number[]): TranscribedNote[] =>

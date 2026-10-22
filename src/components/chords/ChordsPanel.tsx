@@ -9,7 +9,7 @@ import { ChordTabs, type TabId } from './ChordTabs'
 import type { ChordSuggestion } from '../../domain/types'
 
 export function ChordsPanel() {
-  const { status, chords, focusedChord } = useAppState()
+  const { status, chords, harmony, focusedChord } = useAppState()
   const dispatch = useAppDispatch()
   const [activeTab, setActiveTab] = useState<TabId>('all')
   const [playingChordSymbol, setPlayingChordSymbol] = useState<string | null>(null)
@@ -17,6 +17,8 @@ export function ChordsPanel() {
 
   const isLoading = ['decoding', 'transcribing'].includes(status)
   const hasResults = status === 'analyzed' && chords
+  // Analysis finished without a key (too few notes): no chords were generated
+  const notEnoughNotes = status === 'analyzed' && !!harmony && harmony.candidates.length === 0
 
   // Memoize visible chords to avoid recalculating on every render
   const visibleChords = useMemo((): ChordSuggestion[] => {
@@ -101,7 +103,9 @@ export function ChordsPanel() {
         <div className="flex min-h-[120px] flex-col items-center justify-center rounded-xl border border-dashed border-stone-700/50 bg-stone-950/30 p-6">
           <GridIcon className="mb-2 h-8 w-8 text-stone-700" />
           <p className="text-center text-sm text-stone-600">
-            Diatonic, borrowed, and secondary dominant chords will appear here
+            {notEnoughNotes
+              ? 'Not enough notes to detect a key, so no chords to suggest'
+              : 'Diatonic, borrowed, and secondary dominant chords will appear here'}
           </p>
         </div>
       )}

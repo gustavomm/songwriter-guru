@@ -25,6 +25,11 @@ const PARALLEL_MODES_FOR_BORROWING = ['major', 'minor', 'dorian', 'mixolydian']
 // Scoring parameters
 const CLASH_PENALTY_FACTOR = 0.3
 const COLOR_BONUS = 0.1
+// Penalty per chord tone the riff never plays, so an extension (e.g. the G of
+// Am7) only wins over the plain triad when the riff actually contains it
+const MISSING_TONE_PENALTY = 0.04
+// Weight below which a chord tone counts as (partly) missing from the riff
+const MISSING_TONE_THRESHOLD = 0.03
 
 // Roman numerals for Key module (indexes match array positions)
 const MAJOR_ROMAN_FROM_KEY = ['I', 'ii', 'iii', 'IV', 'V', 'vi', 'vii°']
@@ -35,18 +40,63 @@ const MINOR_HARMONIC_ROMAN = ['i', 'ii°', 'III+', 'iv', 'V', 'VI', 'vii°']
 // Melodic minor: raised 6th and 7th (jazz/modern color)
 const MINOR_MELODIC_ROMAN = ['i', 'ii', 'III+', 'IV', 'V', 'vi°', 'vii°']
 
-// Harmonic function assignments for borrowed chords by roman numeral pattern
-const BORROWED_FUNCTIONS: Record<string, HarmonicFunction> = {
-  bII: 'SD', // Neapolitan - predominant function
-  bii: 'SD',
-  bIII: 'T', // Borrowed mediant - tonic substitute
-  biii: 'T',
-  iv: 'SD', // Minor iv in major - predominant
-  IV: 'SD',
-  bVI: 'SD', // Borrowed submediant - predominant
-  bvi: 'SD',
-  bVII: 'D', // Borrowed subtonic - dominant function
-  bvii: 'D',
+/**
+ * Harmonic function by the chord root's distance above the tonic (semitones).
+ * Used for borrowed chords and for diatonic chords Tonal leaves unlabeled
+ * (melodic minor vi° / vii°), so every chord can fill a progression slot:
+ * I/iii/vi-ish → T, ii/IV → SD, V/vii → D, bII (Neapolitan) and bVI → SD,
+ * bIII → T, bVII / minor VII → D (subtonic dominant substitute).
+ */
+const FUNCTION_BY_SEMITONES: readonly HarmonicFunction[] = [
+  'T', // 0: I / i
+  'SD', // 1: bII (Neapolitan)
+  'SD', // 2: ii / II
+  'T', // 3: bIII / III (minor mediant)
+  'T', // 4: iii / #III
+  'SD', // 5: IV / iv
+  'SD', // 6: #iv° / bV
+  'D', // 7: V / v
+  'SD', // 8: bVI / VI
+  'T', // 9: vi (diminished vi° is predominant, see harmonicFunctionForChord)
+  'D', // 10: bVII / VII (subtonic)
+  'D', // 11: vii°
+]
+
+/**
+ * Degree numerals by semitones above the tonic, used to name borrowed chords.
+ * Minor keys name their own natural degrees without accidentals (III, VI, VII)
+ * so a borrowed chord gets the same numeral as the diatonic chord on that
+ * root (Gmaj7 is VIImaj7 in A minor, like diatonic G = VII); raised 6th and
+ * 7th degrees match the harmonic/melodic minor labels (vi°, vii°).
+ */
+const BORROWED_DEGREE_NUMERALS: Record<string, readonly string[]> = {
+  major: ['I', 'bII', 'II', 'bIII', 'III', 'IV', 'bV', 'V', 'bVI', 'VI', 'bVII', 'VII'],
+  minor: ['I', 'bII', 'II', 'III', '#III', 'IV', '#IV', 'V', 'VI', 'VI', 'VII', 'VII'],
+}
+
+/**
+ * Harmonic function of a chord from its root's scale degree and its quality.
+ */
+function harmonicFunctionForChord(
+  root: string,
+  tonic: string,
+  intervals: readonly string[]
+): HarmonicFunction {
+  const semitones = ((Note.chroma(root) ?? 0) - (Note.chroma(tonic) ?? 0) + 12) % 12
+  // A diminished chord on the (raised) 6th, e.g. F#ø7 in A minor, sounds like
+  // a rootless IV7/ii9: predominant rather than tonic
+  if (semitones === 9 && intervals.includes('5d')) return 'SD'
+  return FUNCTION_BY_SEMITONES[semitones]
+}
+
+/**
+ * Key for comparing chords by sound rather than spelling: root pitch class
+ * plus the sorted pitch-class set (so enharmonic spellings compare equal).
+ */
+function chordPitchKey(notes: readonly string[]): string {
+  const pcs = notes.map((n) => Note.chroma(n)).filter((pc): pc is number => pc !== undefined)
+  if (pcs.length === 0) return ''
+  return `${pcs[0]}:${[...pcs].sort((a, b) => a - b).join(',')}`
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -116,14 +166,6 @@ export function romanForChord(degreeNumeral: string, intervals: readonly string[
   return base
 }
 
-/**
- * Strip the quality suffix from a roman numeral, leaving prefix + numeral
- * (e.g. 'bVIImaj7' → 'bVII', 'iiø7' → 'ii'). Used for function lookups.
- */
-function romanCore(roman: string): string {
-  return /^[b#]*(IV|iv|VI{0,3}|vi{0,3}|I{1,3}|i{1,3})/.exec(roman)?.[0] || roman
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
 // Key Module Helpers (for major/minor modes)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -142,6 +184,15 @@ function buildDiatonicFromKey(
   pcWeights: PitchClassWeights
 ): ChordSuggestion[] {
   const chords: ChordSuggestion[] = []
+  const tonic = Chord.get(triads[0] ?? '').tonic ?? ''
+
+  // Tonal leaves some functions blank (melodic minor vi° and vii°): derive
+  // those from the scale degree so every diatonic chord can fill a slot
+  const functionFor = (i: number, chord: { tonic: string | null; intervals: string[] }) =>
+    (harmonicFunctions[i] as HarmonicFunction | '' | undefined) ||
+    (chord.tonic && tonic
+      ? harmonicFunctionForChord(chord.tonic, tonic, chord.intervals)
+      : undefined)
 
   // Add triads
   for (let i = 0; i < triads.length; i++) {
@@ -152,7 +203,7 @@ function buildDiatonicFromKey(
     if (!chord.notes.length) continue
 
     const scores = calculateScores(chord.notes, pcWeights, 'diatonic')
-    const hf = harmonicFunctions[i] as HarmonicFunction | undefined // T, SD, or D
+    const hf = functionFor(i, chord) // T, SD, or D
 
     chords.push({
       id: getCanonicalSymbol(rawSymbol),
@@ -179,7 +230,7 @@ function buildDiatonicFromKey(
     if (!chord.notes.length) continue
 
     const scores = calculateScores(chord.notes, pcWeights, 'diatonic')
-    const hf = harmonicFunctions[i] as HarmonicFunction | undefined
+    const hf = functionFor(i, chord)
 
     chords.push({
       id: getCanonicalSymbol(rawSymbol),
@@ -306,10 +357,13 @@ function generateChordsFromKey(
     // - Natural minor: provides bVII, bVI, bIII (mixture flavor)
     // - Harmonic minor: provides strong V7 and vii° (raised 7th)
     // - Melodic minor: provides modern/jazz color (raised 6th and 7th)
+    // Tonal labels natural minor's VII as SD; the subtonic works as a
+    // dominant substitute (VII → i, VI–VII–i), so treat it as 'D'
+    const naturalFunctions = key.natural.chordsHarmonicFunction.map((fn, i) => (i === 6 ? 'D' : fn))
     const naturalDiatonic = buildDiatonicFromKey(
       key.natural.triads,
       key.natural.chords,
-      key.natural.chordsHarmonicFunction,
+      naturalFunctions,
       MINOR_NATURAL_ROMAN,
       pcWeights
     )
@@ -328,11 +382,23 @@ function generateChordsFromKey(
       pcWeights
     )
 
+    // Harmonic/melodic minor chords that aren't natural minor and aren't the
+    // raised-7th dominants (V, vii°) are colour: i(maj7), i6, III+, ii, IV7...
+    // Mark them so "safe" progressions prefer plain i / i7, and give them the
+    // same colour bonus as other non-diatonic chords
+    const naturalSymbols = new Set(naturalDiatonic.map((c) => c.symbol))
+    const markColorVariants = (chords: ChordSuggestion[]): ChordSuggestion[] =>
+      chords.map((c) =>
+        naturalSymbols.has(c.symbol) || c.function === 'D'
+          ? c
+          : { ...c, colorVariant: true, colorScore: Math.min(1, c.colorScore + COLOR_BONUS) }
+      )
+
     // Union all diatonic chords, using mergeChordDuplicates to handle overlaps
     const allDiatonic = mergeChordDuplicates([
       ...naturalDiatonic,
-      ...harmonicDiatonic,
-      ...melodicDiatonic,
+      ...markColorVariants(harmonicDiatonic),
+      ...markColorVariants(melodicDiatonic),
     ])
 
     // Use harmonic minor for secondary dominants (strongest V/x, vii°/x)
@@ -447,7 +513,7 @@ export function generateChordSuggestions(
   const diatonicChords = keyChords.diatonic
   // Combine secondary dominants and tritone substitutes
   const secondaryChords = [...keyChords.secondary, ...keyChords.substitutes]
-  const borrowedChords = generateBorrowedChords(tonic, tonalModeName, pcWeights)
+  const borrowedChords = generateBorrowedChords(tonic, tonalModeName, pcWeights, diatonicChords)
 
   // Sort each category by supportScore (best-fitting chords first)
   const sortBySupport = (a: ChordSuggestion, b: ChordSuggestion) => b.supportScore - a.supportScore
@@ -562,20 +628,14 @@ function getSeventhChordTypeForDegree(modeName: string, degree: number): string 
 function generateBorrowedChords(
   tonic: string,
   baseModeName: string,
-  pcWeights: PitchClassWeights
+  pcWeights: PitchClassWeights,
+  diatonicChords: readonly ChordSuggestion[]
 ): ChordSuggestion[] {
-  // Get base mode's chord symbols (to avoid duplicates)
-  const baseScaleName = `${tonic} ${baseModeName}`
-  const baseScale = Scale.get(baseScaleName)
-  const baseChordSymbols = new Set<string>()
-
-  for (let degree = 0; degree < baseScale.notes.length; degree++) {
-    const root = baseScale.notes[degree]
-    const triadType = getChordTypeForDegree(baseModeName, degree)
-    const seventhType = getSeventhChordTypeForDegree(baseModeName, degree)
-    baseChordSymbols.add(`${root}${triadType}`)
-    baseChordSymbols.add(`${root}${seventhType}`)
-  }
+  // Chords already in the key (the full diatonic set: in minor that includes
+  // harmonic and melodic minor) are not "borrowed". Compare by sound so that
+  // e.g. D7 / Bm7 / E7 in A minor don't show up in both tabs.
+  const diatonicKeys = new Set(diatonicChords.map((c) => chordPitchKey(c.chordTones)))
+  const isDiatonic = (notes: readonly string[]) => diatonicKeys.has(chordPitchKey(notes))
 
   const borrowedChords: ChordSuggestion[] = []
 
@@ -598,15 +658,14 @@ function generateBorrowedChords(
       const triadType = getChordTypeForDegree(sourceModeName, degree)
       const seventhType = getSeventhChordTypeForDegree(sourceModeName, degree)
 
-      // Check if triad is different from base mode
+      // Check if triad is different from the key's own chords
       const triadSymbol = `${root}${triadType}`
-      if (!baseChordSymbols.has(triadSymbol)) {
-        const chord = Chord.get(triadSymbol)
+      const chord = Chord.get(triadSymbol)
+      if (!isDiatonic(chord.notes)) {
         if (chord.notes.length) {
           const scores = calculateScores(chord.notes, pcWeights, 'borrowed')
-          const roman = getBorrowedRomanNumeral(root, triadType, tonic)
-          const core = romanCore(roman)
-          const harmonicFn = BORROWED_FUNCTIONS[core] || BORROWED_FUNCTIONS[core.toLowerCase()]
+          const roman = getBorrowedRomanNumeral(root, triadType, tonic, baseModeName)
+          const harmonicFn = harmonicFunctionForChord(root, tonic, chord.intervals)
 
           borrowedChords.push({
             id: getCanonicalSymbol(triadSymbol),
@@ -622,15 +681,14 @@ function generateBorrowedChords(
         }
       }
 
-      // Check if 7th chord is different from base mode
+      // Check if 7th chord is different from the key's own chords
       const seventhSymbolKey = `${root}${seventhType}`
-      if (!baseChordSymbols.has(seventhSymbolKey)) {
-        const seventhChord = Chord.get(seventhSymbolKey)
+      const seventhChord = Chord.get(seventhSymbolKey)
+      if (!isDiatonic(seventhChord.notes)) {
         if (seventhChord.notes.length) {
           const scores = calculateScores(seventhChord.notes, pcWeights, 'borrowed')
-          const roman = getBorrowedRomanNumeral(root, seventhType, tonic)
-          const core = romanCore(roman)
-          const harmonicFn = BORROWED_FUNCTIONS[core] || BORROWED_FUNCTIONS[core.toLowerCase()]
+          const roman = getBorrowedRomanNumeral(root, seventhType, tonic, baseModeName)
+          const harmonicFn = harmonicFunctionForChord(root, tonic, seventhChord.intervals)
 
           borrowedChords.push({
             id: getCanonicalSymbol(seventhSymbolKey),
@@ -678,32 +736,22 @@ function getDisplayModeName(tonalModeName: string): string {
 
 /**
  * Get a roman numeral for a borrowed chord, e.g. 'bVII', 'iv7', 'bVImaj7', 'iiø7'.
- * The degree comes from the root's semitone distance to the tonic; case and
- * suffix come from the chord quality (see romanForChord).
+ * The degree comes from the root's semitone distance to the tonic, named
+ * relative to the key's mode (see BORROWED_DEGREE_NUMERALS); case and suffix
+ * come from the chord quality (see romanForChord).
  */
-function getBorrowedRomanNumeral(root: string, chordType: string, tonic: string): string {
-  // Simple mapping based on pitch class distance from tonic
+function getBorrowedRomanNumeral(
+  root: string,
+  chordType: string,
+  tonic: string,
+  baseModeName: string
+): string {
   const rootPc = Note.chroma(root) ?? 0
   const tonicPc = Note.chroma(tonic) ?? 0
   const degreeFromTonic = (rootPc - tonicPc + 12) % 12
 
-  // Map semitones to scale degree approximation
-  const degreeMap: Record<number, string> = {
-    0: 'I',
-    1: 'bII',
-    2: 'II',
-    3: 'bIII',
-    4: 'III',
-    5: 'IV',
-    6: 'bV',
-    7: 'V',
-    8: 'bVI',
-    9: 'VI',
-    10: 'bVII',
-    11: 'VII',
-  }
-
-  const numeral = degreeMap[degreeFromTonic] || 'I'
+  const numerals = BORROWED_DEGREE_NUMERALS[baseModeName] ?? BORROWED_DEGREE_NUMERALS.major
+  const numeral = numerals[degreeFromTonic] || 'I'
   return romanForChord(numeral, Chord.get(`${root}${chordType}`).intervals)
 }
 
@@ -740,11 +788,15 @@ export function calculateScores(
   // Since pcWeights sum to 1.0, this directly gives us the percentage of the riff
   // that "belongs" to this chord
   let supportSum = 0
+  let missingTones = 0
   for (const pc of chordPCs) {
     supportSum += pcWeights[pc]
+    // Chord tones the riff (almost) never plays count against the chord, so a
+    // 7th chord doesn't automatically beat its triad on equal coverage
+    missingTones += Math.max(0, 1 - pcWeights[pc] / MISSING_TONE_THRESHOLD)
   }
-  // supportSum is already 0-1 (percentage of riff covered by chord tones)
-  const supportScore = supportSum
+  // supportSum is 0-1 (percentage of riff covered by chord tones)
+  const supportScore = supportSum - MISSING_TONE_PENALTY * missingTones
 
   // Clash score: weight of notes that would clash with the chord
   // (semitone dissonances that aren't part of the chord)

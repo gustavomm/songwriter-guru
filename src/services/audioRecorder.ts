@@ -1,6 +1,6 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
 import type { RecordingError, RecordingAsset } from '../domain/types'
-import { PCMCapture, isPCMCaptureSupported } from './pcmCapture'
+import { PCMCapture, isPCMCaptureSupported, hasUsablePcmData } from './pcmCapture'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -213,11 +213,13 @@ export function useAudioRecorder(options: UseAudioRecorderOptions = {}): UseAudi
           pcmCaptureRef.current = null
         }
 
+        // Empty PCM (no samples delivered) counts as missing: fall back to the blob
+        const pcm = { pcmData, pcmSampleRate }
         const asset: RecordingAsset = {
           blob,
           audioUrl,
           durationMs,
-          ...(pcmData && pcmSampleRate ? { pcmData, pcmSampleRate } : {}),
+          ...(hasUsablePcmData(pcm) ? pcm : {}),
         }
 
         setRecordingAsset(asset)

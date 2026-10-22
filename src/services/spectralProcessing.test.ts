@@ -166,5 +166,18 @@ describe('spectralProcessing', () => {
       // Just below threshold should return false
       expect(shouldApplyNoiseReduction(data, -45)).toBe(false)
     })
+
+    it('requires a low SNR when the RMS level is given', () => {
+      const data = new Float32Array(1000) // Dummy data
+
+      // Noise floor -35 dB, RMS -25 dB: SNR 10 dB -> noisy
+      expect(shouldApplyNoiseReduction(data, -35, -25)).toBe(true)
+
+      // Noise floor -35 dB, RMS -10 dB: SNR 25 dB -> loud but clean, skip NR
+      expect(shouldApplyNoiseReduction(data, -35, -10)).toBe(false)
+
+      // Low noise floor still skips NR regardless of SNR
+      expect(shouldApplyNoiseReduction(data, -60, -55)).toBe(false)
+    })
   })
 })

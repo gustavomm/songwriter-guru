@@ -5,7 +5,7 @@ import {
   generateChordSuggestions,
   romanForChord,
 } from './chordSuggestion'
-import { Chord } from 'tonal'
+import { Chord, Note } from 'tonal'
 import type { PitchClassWeights, HarmonicFieldCandidate, RiffFeatures } from '../domain/types'
 
 describe('chordSuggestion', () => {
@@ -45,8 +45,9 @@ describe('chordSuggestion', () => {
 
       const scores = calculateScores(cMajorTones, pcWeights, 'diatonic')
 
-      // Support = 0.3 (C) + 0.3 (E) + 0 (G not in riff) = 0.6
-      expect(scores.supportScore).toBeCloseTo(0.6, 2)
+      // Support = 0.3 (C) + 0.3 (E) + 0 (G not in riff) = 0.6,
+      // minus 0.04 for the chord tone the riff never plays (G)
+      expect(scores.supportScore).toBeCloseTo(0.56, 2)
     })
 
     it('applies clash penalty for semitone clashes', () => {
@@ -86,8 +87,8 @@ describe('chordSuggestion', () => {
 
       const scores = calculateScores(fMajorTones, pcWeights, 'diatonic')
 
-      // Support = 0.3 (F) + 0 (A) + 0.2 (C) = 0.5
-      expect(scores.supportScore).toBeCloseTo(0.5, 2)
+      // Support = 0.3 (F) + 0 (A) + 0.2 (C) = 0.5, minus 0.04 for the missing A
+      expect(scores.supportScore).toBeCloseTo(0.46, 2)
     })
   })
 
@@ -447,6 +448,145 @@ describe('chordSuggestion', () => {
           expect(tone).not.toMatch(/##/)
         }
       }
+    })
+  })
+
+  describe('key-aware chord catalog', () => {
+    const pcWeights = (weights: Partial<Record<number, number>>): PitchClassWeights => {
+      const result: PitchClassWeights = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+      for (const [pc, weight] of Object.entries(weights)) result[Number(pc)] = weight ?? 0
+      return result
+    }
+    const features = (weights: Partial<Record<number, number>>): RiffFeatures => ({
+      pcWeights: pcWeights(weights),
+      topPitchClasses: [],
+    })
+    const aMinorField: HarmonicFieldCandidate = {
+      id: 'A-minor',
+      tonic: 'A',
+      mode: 'Minor',
+      scaleNotes: ['A', 'B', 'C', 'D', 'E', 'F', 'G'],
+      fitScore: 1,
+      outOfScale: [],
+    }
+    const cMajorField: HarmonicFieldCandidate = {
+      id: 'C-major',
+      tonic: 'C',
+      mode: 'Major',
+      scaleNotes: ['C', 'D', 'E', 'F', 'G', 'A', 'B'],
+      fitScore: 1,
+      outOfScale: [],
+    }
+    // A natural minor riff: A B C D E F G
+    const aMinorRiff = features({ 9: 0.3, 11: 0.1, 0: 0.15, 2: 0.1, 4: 0.15, 5: 0.1, 7: 0.1 })
+    const pitchSet = (tones: string[]) =>
+      [...new Set(tones.map((t) => Note.chroma(t)))].sort((a, b) => a - b).join(',')
+
+    it('never lists a chord as both diatonic and borrowed in A minor', () => {
+      const result = generateChordSuggestions(aMinorField, aMinorRiff)
+      const diatonicSymbols = new Set(result.diatonic.map((c) => c.symbol))
+      const diatonicSets = new Set(result.diatonic.map((c) => pitchSet(c.chordTones)))
+
+      for (const chord of result.borrowed) {
+        expect(diatonicSymbols.has(chord.symbol), chord.symbol).toBe(false)
+        expect(diatonicSets.has(pitchSet(chord.chordTones)), chord.symbol).toBe(false)
+      }
+      // The harmonic/melodic minor chords stay in the diatonic tab only
+      for (const symbol of ['D7', 'E7', 'F#ø7', 'Bm7']) {
+        expect(diatonicSymbols.has(symbol)).toBe(true)
+        expect(result.borrowed.some((c) => c.symbol === symbol)).toBe(false)
+      }
+    })
+
+    it('treats the natural minor VII as a dominant-function chord', () => {
+      const result = generateChordSuggestions(aMinorField, aMinorRiff)
+      const g = result.diatonic.find((c) => c.symbol === 'G')
+      const g7 = result.diatonic.find((c) => c.symbol === 'G7')
+
+      expect(g?.roman).toBe('VII')
+      expect(g?.function).toBe('D')
+      expect(g7?.function).toBe('D')
+    })
+
+    it('names borrowed chords relative to the minor key (VII, not bVII)', () => {
+      const result = generateChordSuggestions(aMinorField, aMinorRiff)
+      const gmaj7 = result.borrowed.find((c) => c.symbol === 'Gmaj7')
+
+      expect(gmaj7?.roman).toBe('VIImaj7')
+      expect(result.borrowed.some((c) => c.roman?.startsWith('b'))).toBe(false)
+    })
+
+    it('keeps flat-degree names for borrowed chords in major', () => {
+      const result = generateChordSuggestions(cMajorField, features({ 0: 0.5, 4: 0.25, 7: 0.25 }))
+      expect(result.borrowed.find((c) => c.symbol === 'Bb')?.roman).toBe('bVII')
+      expect(result.borrowed.find((c) => c.symbol === 'Ab')?.roman).toBe('bVI')
+    })
+
+    it('gives every chord a harmonic function', () => {
+      for (const field of [cMajorField, aMinorField]) {
+        const result = generateChordSuggestions(field, aMinorRiff)
+        for (const chord of result.ranked) {
+          expect(chord.function, `${field.id} ${chord.symbol} (${chord.roman})`).toBeDefined()
+        }
+      }
+    })
+
+    it('maps borrowed chords to functions by scale degree', () => {
+      const result = generateChordSuggestions(cMajorField, features({ 0: 0.5, 4: 0.25, 7: 0.25 }))
+      const fn = (symbol: string) => result.borrowed.find((c) => c.symbol === symbol)?.function
+
+      expect(fn('Cm')).toBe('T') // i
+      expect(fn('Eb')).toBe('T') // bIII
+      expect(fn('Fm')).toBe('SD') // iv
+      expect(fn('Ab')).toBe('SD') // bVI
+      expect(fn('Gm')).toBe('D') // v
+      expect(fn('Bb')).toBe('D') // bVII
+    })
+
+    it('marks harmonic/melodic minor tonic variants as colour, not plain diatonic', () => {
+      const result = generateChordSuggestions(aMinorField, aMinorRiff)
+      const variant = (symbol: string) =>
+        result.diatonic.find((c) => c.symbol === symbol)?.colorVariant
+
+      expect(variant('AmM7')).toBe(true)
+      expect(variant('Am6')).toBe(true)
+      expect(variant('C+')).toBe(true)
+      // Plain tonic chords and the raised-7th dominants are not colour variants
+      expect(variant('Am')).toBeFalsy()
+      expect(variant('Am7')).toBeFalsy()
+      expect(variant('E7')).toBeFalsy()
+    })
+  })
+
+  describe('seventh-chord bias', () => {
+    const weights = (w: Partial<Record<number, number>>): PitchClassWeights => {
+      const result: PitchClassWeights = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+      for (const [pc, weight] of Object.entries(w)) result[Number(pc)] = weight ?? 0
+      return result
+    }
+
+    it('prefers Am over Am7 when the riff has no G', () => {
+      const riff = weights({ 9: 0.4, 0: 0.3, 4: 0.3 }) // A C E
+      const am = calculateScores(['A', 'C', 'E'], riff, 'diatonic')
+      const am7 = calculateScores(['A', 'C', 'E', 'G'], riff, 'diatonic')
+
+      expect(am.supportScore).toBeGreaterThan(am7.supportScore)
+    })
+
+    it('prefers Am7 over Am when the riff plays the G', () => {
+      const riff = weights({ 9: 0.35, 0: 0.25, 4: 0.25, 7: 0.15 }) // A C E G
+      const am = calculateScores(['A', 'C', 'E'], riff, 'diatonic')
+      const am7 = calculateScores(['A', 'C', 'E', 'G'], riff, 'diatonic')
+
+      expect(am7.supportScore).toBeGreaterThan(am.supportScore)
+    })
+
+    it('keeps scores within 0..1', () => {
+      const scores = calculateScores(['A', 'C', 'E', 'G'], weights({ 1: 1 }), 'borrowed')
+      expect(scores.supportScore).toBeGreaterThanOrEqual(0)
+      expect(scores.colorScore).toBeGreaterThanOrEqual(0)
+      expect(scores.supportScore).toBeLessThanOrEqual(1)
+      expect(scores.colorScore).toBeLessThanOrEqual(1)
     })
   })
 })

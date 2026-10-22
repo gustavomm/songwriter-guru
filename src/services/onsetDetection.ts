@@ -207,7 +207,9 @@ export function detectOnsets(audioData: Float32Array, sampleRate: number): Onset
     const frameData = audioData.slice(frameStart, frameStart + FFT_SIZE)
 
     const spectrum = fft.magnitudeSpectrum(frameData)
-    const flux = calculateSpectralFlux(prevSpectrum, spectrum)
+    // The first frame has no predecessor; comparing it to silence would report
+    // the whole spectrum as an onset, so its flux is zero
+    const flux = frame === 0 ? 0 : calculateSpectralFlux(prevSpectrum, spectrum)
     fluxValues.push(flux)
 
     prevSpectrum = spectrum
@@ -235,7 +237,8 @@ export function detectOnsets(audioData: Float32Array, sampleRate: number): Onset
     const afterMinInterval = i - lastOnsetFrame >= minIntervalFrames
 
     if (isPeak && aboveThreshold && afterMinInterval) {
-      const timeSec = (i * HOP_SIZE) / sampleRate
+      // Report the window center, not its start (otherwise onsets are ~46ms early)
+      const timeSec = (i * HOP_SIZE + FFT_SIZE / 2) / sampleRate
       onsets.push({
         timeSec,
         strength: flux,

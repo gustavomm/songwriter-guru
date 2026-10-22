@@ -28,6 +28,7 @@ import {
   hasStrongOnsetNear,
   type OnsetEvent,
 } from './onsetDetection'
+import { hasUsablePcmData } from './pcmCapture'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Constants
@@ -61,9 +62,10 @@ const ENERGY_TOLERANCE = 11
 
 // Guitar frequency range (for filtering false positives)
 // Low: ~65Hz supports drop C tuning
-// High: ~3000Hz covers highest frets + upper harmonics
+// High: ~1400Hz covers the highest fretted note (E6 = 1319Hz on a 24-fret neck)
+// plus a small margin; anything above is an upper harmonic, not a played note
 const GUITAR_MIN_FREQ = 65
-const GUITAR_MAX_FREQ = 3000
+const GUITAR_MAX_FREQ = 1400
 
 // Base amplitude floor for filtering weak notes
 const BASE_MIN_AMPLITUDE = 0.3
@@ -78,7 +80,7 @@ const BASE_MIN_NOTE_DURATION_SEC = 0.06 // 60ms minimum
 /**
  * Adaptive thresholds calculated from audio metrics.
  */
-interface AdaptiveThresholds {
+export interface AdaptiveThresholds {
   onsetThreshold: number
   frameThreshold: number
   minNoteLength: number
@@ -94,7 +96,7 @@ interface AdaptiveThresholds {
  * - Noisier recordings get stricter detection (higher thresholds)
  * - Higher dynamic range suggests more transients (sensitive onset detection)
  */
-function calculateAdaptiveThresholds(
+export function calculateAdaptiveThresholds(
   metrics: AudioMetrics,
   preset: TranscriptionPreset
 ): AdaptiveThresholds {
@@ -123,19 +125,22 @@ function calculateAdaptiveThresholds(
   const presetMinLengthBoost = preset === 'chord' ? 2 : 0
 
   // Calculate final thresholds
-  // For thresholds, lower = more sensitive, so multiply by factors
+  // For thresholds, lower = more sensitive. Divide by snrFactor so that
+  // noisier signals (lower snrFactor) get stricter (higher) thresholds.
   const onsetThreshold = Math.min(
     0.7,
-    Math.max(0.3, (BASE_ONSET_THRESHOLD + presetOnsetBoost) * snrFactor)
+    Math.max(0.3, (BASE_ONSET_THRESHOLD + presetOnsetBoost) / snrFactor)
   )
 
   const frameThreshold = Math.min(
     0.5,
-    Math.max(0.2, (BASE_FRAME_THRESHOLD + presetFrameBoost) * snrFactor * dynamicFactor)
+    Math.max(0.2, ((BASE_FRAME_THRESHOLD + presetFrameBoost) / snrFactor) * dynamicFactor)
   )
 
-  // Min note length: increase for noisy signals
-  const minNoteLength = Math.round((BASE_MIN_NOTE_LENGTH + presetMinLengthBoost) / snrFactor)
+  // Min note length: add at most 2 frames (~23ms) for noisy signals.
+  // Scaling the base length with noise would drop short palm-muted 8ths/16ths.
+  const noisePenaltyFrames = Math.round(((1 - snrFactor) / 0.3) * 2)
+  const minNoteLength = BASE_MIN_NOTE_LENGTH + presetMinLengthBoost + noisePenaltyFrames
 
   // Min amplitude: lower for clean signals with good dynamics
   const minAmplitude = Math.min(
@@ -158,6 +163,30 @@ function calculateAdaptiveThresholds(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// TensorFlow Engine Access
+// ─────────────────────────────────────────────────────────────────────────────
+
+interface TfEngineScope {
+  startScope(name?: string): void
+  endScope(result?: unknown): void
+}
+
+/**
+ * Get the tf engine Basic Pitch runs on.
+ *
+ * Basic Pitch bundles its own tfjs (v3) while the app depends on v4. Importing
+ * either copy here would load a second tfjs and re-register its kernels and
+ * backends. Every tfjs-core version keeps its engine on the global namespace
+ * (`_tfengine`), so read it from there instead.
+ */
+function getTfEngine(): TfEngineScope | null {
+  const engine = (globalThis as { _tfengine?: Partial<TfEngineScope> })._tfengine
+  return typeof engine?.startScope === 'function' && typeof engine.endScope === 'function'
+    ? (engine as TfEngineScope)
+    : null
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Custom Error for Cancellation
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -176,6 +205,7 @@ class TranscriptionServiceImpl {
   private basicPitch: BasicPitch | null = null
   private modelLoadingPromise: Promise<BasicPitch> | null = null
   private currentAbortController: AbortController | null = null
+  private evaluationQueue: Promise<void> = Promise.resolve()
 
   /**
    * Ensure the Basic Pitch model is loaded (lazy loading with deduplication)
@@ -251,8 +281,9 @@ class TranscriptionServiceImpl {
     this.cancel()
 
     // Create new abort controller for this transcription
-    this.currentAbortController = new AbortController()
-    const signal = this.currentAbortController.signal
+    const abortController = new AbortController()
+    this.currentAbortController = abortController
+    const signal = abortController.signal
 
     try {
       // Step 1: Load model
@@ -270,7 +301,7 @@ class TranscriptionServiceImpl {
       let durationMs: number
       let metrics: AudioMetrics
 
-      if (recordingAsset.pcmData && recordingAsset.pcmSampleRate) {
+      if (hasUsablePcmData(recordingAsset)) {
         // HQ Path: Use raw PCM data (lossless)
         onProgress?.(10, 'Preparing audio (HQ lossless)...')
         const prepared = await prepareRawPcmForTranscription(
@@ -328,27 +359,39 @@ class TranscriptionServiceImpl {
       const allOnsets: number[][] = []
       const allContours: number[][] = []
 
-      await basicPitch.evaluateModel(
-        audioData,
-        // onComplete callback - called incrementally with each batch of results
-        (frames, onsets, contours) => {
-          // Check for cancellation during model evaluation
-          if (signal.aborted) return
+      await this.runExclusive(async () => {
+        // Basic Pitch never disposes its intermediate tensors; collect them in a
+        // tf engine scope. The callbacks receive plain JS arrays (tensor.array()),
+        // so nothing we keep references a tensor.
+        const engine = getTfEngine()
+        engine?.startScope()
+        try {
+          await basicPitch.evaluateModel(
+            audioData,
+            // onComplete callback - called incrementally with each batch of results
+            (frames, onsets, contours) => {
+              // Check for cancellation during model evaluation
+              if (signal.aborted) return
 
-          // Accumulate results from each callback
-          allFrames.push(...frames)
-          allOnsets.push(...onsets)
-          allContours.push(...contours)
-        },
-        // percentCallback - Basic Pitch returns percent as 0..1, not 0..100
-        (percent) => {
-          if (signal.aborted) return
+              // Accumulate results from each callback
+              allFrames.push(...frames)
+              allOnsets.push(...onsets)
+              allContours.push(...contours)
+            },
+            // percentCallback - Basic Pitch returns percent as 0..1, not 0..100
+            (percent) => {
+              // Called before each batch: throwing here stops the remaining batches
+              if (signal.aborted) throw new TranscriptionCancelledError()
 
-          // Scale percent (0..1) to 15-90 range for overall progress
-          const scaledPercent = 15 + percent * 75
-          onProgress?.(scaledPercent, `Transcribing... ${Math.round(percent * 100)}%`)
+              // Scale percent (0..1) to 15-90 range for overall progress
+              const scaledPercent = 15 + percent * 75
+              onProgress?.(scaledPercent, `Transcribing... ${Math.round(percent * 100)}%`)
+            }
+          )
+        } finally {
+          engine?.endScope()
         }
-      )
+      })
 
       // Check for cancellation after model evaluation
       if (signal.aborted) {
@@ -418,9 +461,26 @@ class TranscriptionServiceImpl {
         range: { minMidi, maxMidi },
       }
     } finally {
-      // Clear the abort controller when done (success or error)
-      this.currentAbortController = null
+      // Clear the abort controller when done (success or error), unless a newer
+      // transcription has already replaced it
+      if (this.currentAbortController === abortController) {
+        this.currentAbortController = null
+      }
     }
+  }
+
+  /**
+   * Run model evaluations one at a time. The tf engine scope stack is global,
+   * so overlapping runs (e.g. a cancelled run still finishing its current batch)
+   * would otherwise end each other's scopes and dispose live tensors.
+   */
+  private runExclusive<T>(task: () => Promise<T>): Promise<T> {
+    const run = this.evaluationQueue.then(task)
+    this.evaluationQueue = run.then(
+      () => undefined,
+      () => undefined
+    )
+    return run
   }
 
   /**

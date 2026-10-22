@@ -243,6 +243,39 @@ async function isolateFrequencyBand(
 }
 
 /**
+ * Compute the RMS of a centered window around every sample.
+ * Window for sample i is [i - halfWindow, i + halfWindow), clipped to the signal.
+ * Uses a running sum of squares, so cost is O(n) instead of O(n * window).
+ */
+export function computeSlidingRms(data: Float32Array, halfWindow: number): Float32Array {
+  const n = data.length
+  const result = new Float32Array(n)
+  if (n === 0) return result
+
+  // Initial window for i = 0: [0, min(n, halfWindow))
+  let sumSquares = 0
+  const initialEnd = Math.min(n, halfWindow)
+  for (let j = 0; j < initialEnd; j++) {
+    sumSquares += data[j] * data[j]
+  }
+
+  for (let i = 0; i < n; i++) {
+    if (i > 0) {
+      // Slide the window: drop the sample leaving at the start, add the one entering at the end
+      const leaving = i - 1 - halfWindow
+      if (leaving >= 0) sumSquares -= data[leaving] * data[leaving]
+      const entering = i - 1 + halfWindow
+      if (entering < n) sumSquares += data[entering] * data[entering]
+    }
+    const windowLength = Math.min(n, i + halfWindow) - Math.max(0, i - halfWindow)
+    // Clamp tiny negative values caused by floating-point cancellation
+    result[i] = windowLength > 0 ? Math.sqrt(Math.max(0, sumSquares) / windowLength) : 0
+  }
+
+  return result
+}
+
+/**
  * Apply a frequency-aware adaptive noise gate.
  *
  * This gate analyzes energy in multiple frequency bands and applies
@@ -296,20 +329,17 @@ async function applyFrequencyAwareGate(
   // RMS window size (about 10ms)
   const rmsWindow = Math.round(sampleRate * 0.01)
 
+  // Per-band sliding RMS, computed once with a running sum
+  const bandRms = bandBuffers.map(({ band, data }) => ({
+    weight: FREQ_BANDS[band].weight,
+    rms: computeSlidingRms(data, rmsWindow),
+  }))
+
   for (let i = 0; i < audioData.length; i++) {
     // Calculate weighted RMS across frequency bands
     let weightedRms = 0
-    const windowStart = Math.max(0, i - rmsWindow)
-    const windowEnd = Math.min(audioData.length, i + rmsWindow)
-    const windowLength = windowEnd - windowStart
-
-    for (const { band, data } of bandBuffers) {
-      let bandSumSquares = 0
-      for (let j = windowStart; j < windowEnd; j++) {
-        bandSumSquares += data[j] * data[j]
-      }
-      const bandRms = Math.sqrt(bandSumSquares / windowLength)
-      weightedRms += bandRms * FREQ_BANDS[band].weight
+    for (const { weight, rms } of bandRms) {
+      weightedRms += rms[i] * weight
     }
 
     // Update envelope with attack/release
@@ -361,18 +391,10 @@ function applySimpleNoiseGate(
 
   // RMS window size (about 10ms)
   const rmsWindow = Math.round(sampleRate * 0.01)
+  const localRms = computeSlidingRms(audioData, rmsWindow)
 
   for (let i = 0; i < audioData.length; i++) {
-    // Calculate local RMS
-    let sumSquares = 0
-    const windowStart = Math.max(0, i - rmsWindow)
-    const windowEnd = Math.min(audioData.length, i + rmsWindow)
-    const windowLength = windowEnd - windowStart
-
-    for (let j = windowStart; j < windowEnd; j++) {
-      sumSquares += audioData[j] * audioData[j]
-    }
-    const rms = Math.sqrt(sumSquares / windowLength)
+    const rms = localRms[i]
 
     // Update envelope with attack/release
     if (rms > envelope) {
@@ -425,7 +447,8 @@ async function preprocessForTranscription(
 
   // Step 5: Apply spectral noise reduction for noisy signals
   // This helps clean up background noise before pitch detection
-  const isNoisy = shouldApplyNoiseReduction(audioData, metrics.noiseFloorDb)
+  // Requires both a high absolute noise floor and a low SNR (evidence of real noise)
+  const isNoisy = shouldApplyNoiseReduction(audioData, metrics.noiseFloorDb, metrics.rmsLevelDb)
   let spectralNrApplied = false
   if (isNoisy && metrics.noiseFloorDb > SPECTRAL_NR_THRESHOLD_DB) {
     try {
@@ -438,11 +461,12 @@ async function preprocessForTranscription(
   }
 
   // Step 6: Normalize to target level
-  normalizeAudio(audioData, TARGET_PEAK_DBFS)
+  const normalizationGain = normalizeAudio(audioData, TARGET_PEAK_DBFS)
 
   // Step 7: Apply noise gate
-  // Convert noise floor from dB to linear for the gate
-  const noiseFloorLinear = Math.pow(10, metrics.noiseFloorDb / 20)
+  // Convert noise floor from dB to linear for the gate. The floor was measured
+  // before normalization, so scale it by the same gain to match the signal.
+  const noiseFloorLinear = Math.pow(10, metrics.noiseFloorDb / 20) * normalizationGain
 
   // If spectral NR was applied, use simple gate to avoid double-processing
   // Otherwise, use frequency-aware gate for noisy signals
