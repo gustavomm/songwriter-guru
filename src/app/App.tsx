@@ -8,6 +8,7 @@ import { ProgressionsPanel } from '../components/progressions'
 import { FretboardPanel } from '../components/fretboard'
 import { AppProvider, mockAnalyzedState, useAppState } from '../domain/state'
 import { transcriptionService } from '../services/transcriptionService'
+import { midiPlayer } from '../services/midiPlayer'
 
 // Toggle this to test with mock data (set to false for real recording)
 const USE_MOCK_DATA = false
@@ -24,6 +25,19 @@ function MainContent() {
     transcriptionService.ensureModelLoaded().catch(() => {
       // Silently handle preload errors - will retry when user transcribes
     })
+  }, [])
+
+  // Browsers only allow audio after a user gesture, so start the audio engine and fetch the
+  // guitar samples on the first tap or key press. By the time a play button is hit, the
+  // guitar is usually ready.
+  useEffect(() => {
+    const warmUp = () => midiPlayer.warmUp()
+    window.addEventListener('pointerdown', warmUp, { once: true })
+    window.addEventListener('keydown', warmUp, { once: true })
+    return () => {
+      window.removeEventListener('pointerdown', warmUp)
+      window.removeEventListener('keydown', warmUp)
+    }
   }, [])
 
   return (
