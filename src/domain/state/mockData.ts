@@ -52,6 +52,7 @@ export const mockHarmony: HarmonyAnalysisResult = {
       mode: 'Minor',
       scaleNotes: ['A', 'B', 'C', 'D', 'E', 'F', 'G'],
       fitScore: 0.95,
+      confidence: 0.85,
       outOfScale: [],
     },
     {
@@ -60,10 +61,12 @@ export const mockHarmony: HarmonyAnalysisResult = {
       mode: 'Major',
       scaleNotes: ['C', 'D', 'E', 'F', 'G', 'A', 'B'],
       fitScore: 0.82,
+      confidence: 0.12,
       outOfScale: [],
     },
   ],
   selectedCandidateId: 'a-minor',
+  ambiguous: false,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

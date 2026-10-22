@@ -21,8 +21,17 @@ export interface RiffFeatures {
   pcWeights: PitchClassWeights
   /** Most prominent pitch classes (indices 0-11) */
   topPitchClasses: number[]
-  /** Pitch class of the last note (for resolution hints) */
+  /** Pitch class of the last note to start (lowest note of a final chord) */
   lastNotePc?: number
-  /** Pitch class of the lowest note (for bass-driven key inference) */
+  /** Pitch class of the first note to start (lowest note of an opening chord) */
+  firstNotePc?: number
+  /**
+   * Bass / pedal pitch class: the pitch class carrying the most duration ×
+   * amplitude weight among the lowest-register notes (within a few semitones
+   * of the lowest note), so a sustained or repeated low note outweighs a
+   * single short low pickup.
+   */
   bassPc?: number
+  /** Share (0-1) of the low-register weight carried by `bassPc` */
+  bassStrength?: number
 }

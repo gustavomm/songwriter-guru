@@ -10,10 +10,23 @@ interface FieldCardProps {
   isPlayingDrone: boolean
   onPlayScale: () => void
   onToggleDrone: () => void
+  /** A close runner-up key, shown as "Could also be X" (top card only) */
+  alternative?: HarmonicFieldCandidate
+}
+
+/**
+ * Confidence tier for a key's likelihood. A key with a close alternative is
+ * at most "Medium", however its likelihood compares with the other keys.
+ */
+function confidenceLevel(confidence: number, hasCloseAlternative: boolean) {
+  if (confidence >= 0.75 && !hasCloseAlternative) return 'High'
+  if (confidence >= 0.35) return 'Medium'
+  return 'Low'
 }
 
 export const FieldCard = memo(function FieldCard({
   candidate,
+  alternative,
   isSelected,
   onSelect,
   isPlayingScale,
@@ -27,6 +40,9 @@ export const FieldCard = memo(function FieldCard({
     if ((e.target as HTMLElement).closest('[data-no-select]')) return
     onSelect()
   }
+
+  const confidence = candidate.confidence ?? candidate.fitScore
+  const level = confidenceLevel(confidence, alternative !== undefined)
 
   return (
     <div
@@ -45,16 +61,24 @@ export const FieldCard = memo(function FieldCard({
         </div>
         <div
           className={`rounded-full px-2 py-0.5 text-xs font-medium ${
-            candidate.fitScore >= 0.9
+            level === 'High'
               ? 'bg-emerald-500/20 text-emerald-400'
-              : candidate.fitScore >= 0.8
+              : level === 'Medium'
                 ? 'bg-amber-500/20 text-amber-400'
                 : 'bg-stone-500/20 text-stone-400'
           }`}
+          title={`${Math.round(confidence * 100)}% likely among the 24 major/minor keys`}
         >
-          {Math.round(candidate.fitScore * 100)}% fit
+          {level} confidence
         </div>
       </div>
+
+      {/* Close alternative (top card only) */}
+      {alternative && (
+        <p className="mb-2 text-xs text-amber-400/80">
+          Could also be {alternative.tonic} {alternative.mode.toLowerCase()}
+        </p>
+      )}
 
       {/* Scale notes */}
       <div className="flex flex-wrap gap-1.5">

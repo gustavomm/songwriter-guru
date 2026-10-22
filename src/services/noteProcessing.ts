@@ -108,6 +108,63 @@ export function filterIsolatedNoiseNotes(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Overtone (Ghost Note) Suppression
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Semitone distances of the strong guitar harmonics above a fundamental:
+ * 2nd (octave), 3rd (octave + fifth), 4th (two octaves), 5th (two octaves +
+ * major third). A ringing low E's 5th harmonic is a G#, for example.
+ */
+export const OVERTONE_INTERVALS = [12, 19, 24, 28] as const
+
+/** A candidate overtone must start within this window of the louder note's start */
+export const OVERTONE_ONSET_WINDOW_SEC = 0.05
+
+/** A candidate overtone must be quieter than this fraction of the louder note */
+export const OVERTONE_MAX_AMPLITUDE_RATIO = 0.8
+
+/** A candidate overtone may outlast the louder note by at most this much */
+export const OVERTONE_END_TOLERANCE_SEC = 0.1
+
+/**
+ * Drop notes that are probably overtones of a louder, lower note.
+ *
+ * A note N is dropped when some note L with N.midi − L.midi in
+ * OVERTONE_INTERVALS:
+ *   - is louder: amp(N) < OVERTONE_MAX_AMPLITUDE_RATIO × amp(L),
+ *   - sounds when N starts: N starts within OVERTONE_ONSET_WINDOW_SEC of L's
+ *     start, or while L is still ringing, and
+ *   - does not end clearly before N (a harmonic dies with its fundamental).
+ *
+ * A quieter melody note played an octave above a ringing note is lost only if
+ * it also stops when that note stops; louder or longer notes are kept.
+ */
+export function suppressOvertones<T extends TranscribedNote>(
+  notes: T[],
+  onsetWindow: number = OVERTONE_ONSET_WINDOW_SEC,
+  maxAmplitudeRatio: number = OVERTONE_MAX_AMPLITUDE_RATIO,
+  endTolerance: number = OVERTONE_END_TOLERANCE_SEC
+): T[] {
+  if (notes.length <= 1) return notes
+
+  const amp = (note: TranscribedNote) => note.velocity ?? 0.5
+  const intervals: readonly number[] = OVERTONE_INTERVALS
+
+  return notes.filter(
+    (note) =>
+      !notes.some((other) => {
+        if (other === note || !intervals.includes(note.midi - other.midi)) return false
+        if (amp(note) >= maxAmplitudeRatio * amp(other)) return false
+        const startsTogether = Math.abs(note.startSec - other.startSec) <= onsetWindow
+        const startsDuring = note.startSec >= other.startSec && note.startSec < other.endSec
+        const diesWithIt = note.endSec <= other.endSec + endTolerance
+        return (startsTogether || startsDuring) && diesWithIt
+      })
+  )
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Polyphony Limiting
 // ─────────────────────────────────────────────────────────────────────────────
 

@@ -152,6 +152,85 @@ describe('featureExtraction', () => {
       expect(result.bassPc).toBe(0)
     })
 
+    it('uses onset time, not array order, for first and last notes', () => {
+      const notes: TranscribedNote[] = [
+        { startSec: 2, endSec: 3, midi: 67 }, // G4 - starts last
+        { startSec: 0, endSec: 1, midi: 62 }, // D4 - starts first
+        { startSec: 1, endSec: 2, midi: 64 }, // E4
+      ]
+
+      const result = extractFeatures(notes)
+
+      expect(result.firstNotePc).toBe(2)
+      expect(result.lastNotePc).toBe(7)
+    })
+
+    it('uses the lowest note of a final chord as the last note', () => {
+      const notes: TranscribedNote[] = [
+        { startSec: 0, endSec: 1, midi: 60 },
+        { startSec: 1, endSec: 3, midi: 64 }, // E4 (chord, listed first)
+        { startSec: 1.02, endSec: 3, midi: 57 }, // A3 (chord root)
+      ]
+
+      expect(extractFeatures(notes).lastNotePc).toBe(9)
+    })
+
+    it('picks a sustained low pedal over a single short lowest note', () => {
+      const notes: TranscribedNote[] = [
+        { startSec: 0, endSec: 0.1, midi: 43, velocity: 0.6 }, // G2 - short, lowest
+        { startSec: 0.2, endSec: 4, midi: 45, velocity: 0.6 }, // A2 - sustained pedal
+        { startSec: 0.5, endSec: 1, midi: 60, velocity: 0.8 },
+        { startSec: 1, endSec: 1.5, midi: 64, velocity: 0.8 },
+      ]
+
+      const result = extractFeatures(notes)
+
+      expect(result.bassPc).toBe(9)
+      expect(result.bassStrength).toBeGreaterThan(0.9)
+    })
+
+    it('counts repeated low notes towards the bass', () => {
+      // E2 played once, A2 played four times (both in the low register)
+      const notes: TranscribedNote[] = [40, 45, 64, 45, 67, 45, 69, 45].map((midi, i) => ({
+        startSec: i * 0.5,
+        endSec: i * 0.5 + 0.4,
+        midi,
+        velocity: 0.7,
+      }))
+
+      const result = extractFeatures(notes)
+
+      expect(result.bassPc).toBe(9)
+      expect(result.bassStrength).toBeCloseTo(0.8, 5)
+    })
+
+    it('ignores notes above the low register when finding the bass', () => {
+      // Long C4 melody notes must not outweigh the A2 bass
+      const notes: TranscribedNote[] = [
+        { startSec: 0, endSec: 0.5, midi: 45, velocity: 0.7 },
+        { startSec: 0.5, endSec: 3, midi: 60, velocity: 0.9 },
+        { startSec: 3, endSec: 6, midi: 60, velocity: 0.9 },
+      ]
+
+      expect(extractFeatures(notes).bassPc).toBe(9)
+    })
+
+    it('caps a single let-ring note so it cannot dominate the histogram', () => {
+      // Four 0.5s notes then a 5s ringing final C: counted as 1s (2× the median)
+      const notes: TranscribedNote[] = [
+        { startSec: 0, endSec: 0.5, midi: 57, velocity: 0.5 },
+        { startSec: 0.5, endSec: 1, midi: 60, velocity: 0.5 },
+        { startSec: 1, endSec: 1.5, midi: 64, velocity: 0.5 },
+        { startSec: 1.5, endSec: 2, midi: 57, velocity: 0.5 },
+        { startSec: 2, endSec: 7, midi: 60, velocity: 0.5 },
+      ]
+
+      const result = extractFeatures(notes)
+
+      // C: 0.5 + 1.0 (capped) = 1.5 of 3.0 total
+      expect(result.pcWeights[0]).toBeCloseTo(0.5, 5)
+    })
+
     it('handles octave equivalence (same pitch class for different octaves)', () => {
       // C2, C3, C4 should all contribute to pitch class 0
       const notes: TranscribedNote[] = [

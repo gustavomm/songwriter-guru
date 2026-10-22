@@ -20,6 +20,9 @@ export function HarmonicFieldsPanel() {
   const hasResults = status === 'analyzed' && harmony
   // Analysis finished but the riff had too few distinct notes to rank keys
   const notEnoughNotes = hasResults && harmony.candidates.length === 0
+  const alternative = harmony?.ambiguous
+    ? harmony.candidates.find((c) => c.id === harmony.alternativeCandidateId)
+    : undefined
 
   // Cleanup drone when component unmounts or harmony changes
   useEffect(() => {
@@ -142,10 +145,11 @@ export function HarmonicFieldsPanel() {
         </div>
       ) : hasResults ? (
         <div className="space-y-3">
-          {harmony.candidates.map((candidate) => (
+          {harmony.candidates.map((candidate, index) => (
             <FieldCard
               key={candidate.id}
               candidate={candidate}
+              alternative={index === 0 ? alternative : undefined}
               isSelected={candidate.id === harmony.selectedCandidateId}
               isPlayingScale={playingScaleId === candidate.id}
               isPlayingDrone={activeDroneId === candidate.id}
