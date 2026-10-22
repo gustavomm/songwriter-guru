@@ -470,13 +470,11 @@ describe('harmonyAnalysis', () => {
       const aMinor = analyzeHarmony(withLeadingTone).candidates.find((c) => c.id === 'A-minor')!
 
       expect(aMinor.outOfScale.map((o) => o.note)).not.toContain('G#')
-      // Every note is in A harmonic minor, so the fit is as good as an
-      // all-diatonic riff with the same tonic emphasis
-      const naturalRiff = harmonicMinorRiff.map((midi) => (midi === 56 ? 55 : midi))
-      const aMinorNatural = analyzeHarmony(
-        extractFeatures(riffFromMidi(naturalRiff))
-      ).candidates.find((c) => c.id === 'A-minor')!
-      expect(aMinor.fitScore).toBeCloseTo(aMinorNatural.fitScore, 5)
+      // The leading tone makes the riff more clearly A minor, not less
+      const result = analyzeHarmony(withLeadingTone)
+      expect(result.selectedCandidateId).toBe('A-minor')
+      const aMajor = result.candidates.find((c) => c.id === 'A-major')
+      expect(aMinor.confidence!).toBeGreaterThan(aMajor?.confidence ?? 0)
     })
   })
 

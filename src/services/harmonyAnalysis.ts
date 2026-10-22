@@ -198,11 +198,13 @@ function scoreCandidate(tonic: string, mode: Mode, features: RiffFeatures): Scor
     (lastNotePc === tonicPC ? LAST_NOTE_BONUS : 0) +
     (firstNotePc === tonicPC ? FIRST_NOTE_BONUS : 0)
 
-  // Out-of-scale notes (relative to the natural scale shown in the UI)
+  // Out-of-scale notes (relative to the natural scale shown in the UI). The
+  // harmonic-minor leading tone is common practice in minor, so it is not listed
+  const leadingTonePC = mode.name === 'minor' ? (tonicPC + 11) % 12 : undefined
   const outOfScale: { note: string; weight: number }[] = []
   for (let pc = 0; pc < 12; pc++) {
     const weight = pcWeights[pc]
-    if (!scalePCs.has(pc) && weight >= OUT_OF_SCALE_THRESHOLD) {
+    if (!scalePCs.has(pc) && pc !== leadingTonePC && weight >= OUT_OF_SCALE_THRESHOLD) {
       outOfScale.push({ note: spellPitchClassInKey(pc, tonic, tonicPC), weight })
     }
   }
