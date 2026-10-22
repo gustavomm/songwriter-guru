@@ -1,16 +1,26 @@
 import { describe, it, expect } from 'vitest'
+import { Chord, Note, Scale } from 'tonal'
 import {
   generateProgressions,
   computeFinalScore,
-  scoreCadence,
   scoreAppliedChordResolution,
   scoreNeapolitanResolution,
   scoreSubstituteResolution,
-  calculateFunctionBonus,
+  isValidTransition,
+  getResolutionTarget,
   type ProgressionScoreComponents,
 } from './progressionService'
 import { generateChordSuggestions } from './chordSuggestion'
-import type { HarmonicFieldCandidate, RiffFeatures, PitchClassWeights } from '../domain/types'
+import { extractFeatures } from './featureExtraction'
+import { analyzeHarmony } from './harmonyAnalysis'
+import type {
+  ChordSuggestion,
+  HarmonicFieldCandidate,
+  ProgressionSuggestion,
+  RiffFeatures,
+  PitchClassWeights,
+  TranscribedNote,
+} from '../domain/types'
 
 describe('progressionService', () => {
   // Helper to create pitch class weights
@@ -337,47 +347,6 @@ describe('progressionService', () => {
     })
   })
 
-  describe('scoreCadence', () => {
-    it('gives bonus for authentic cadence (V→I)', () => {
-      const score = scoreCadence(['I', 'IV', 'V', 'I'], ['C', 'F', 'G', 'C'], 'C')
-      // Should have: tonic ending (0.15) + authentic cadence (0.20) = 0.35+
-      expect(score).toBeGreaterThanOrEqual(0.35)
-    })
-
-    it('gives bonus for plagal cadence (IV→I)', () => {
-      const score = scoreCadence(['I', 'V', 'IV', 'I'], ['C', 'G', 'F', 'C'], 'C')
-      // Should have: tonic ending (0.15) + plagal cadence (0.10) = 0.25+
-      expect(score).toBeGreaterThanOrEqual(0.25)
-    })
-
-    it('gives bonus for tonic ending', () => {
-      const tonicEnding = scoreCadence(['I', 'IV', 'V', 'I'], ['C', 'F', 'G', 'C'], 'C')
-      const nonTonicEnding = scoreCadence(['I', 'IV', 'I', 'V'], ['C', 'F', 'C', 'G'], 'C')
-
-      expect(tonicEnding).toBeGreaterThan(nonTonicEnding)
-    })
-
-    it('gives bonus for half cadence (ending on V)', () => {
-      const halfCadence = scoreCadence(['I', 'IV', 'V'], ['C', 'F', 'G'], 'C')
-      // Half cadence bonus is 0.05
-      expect(halfCadence).toBeGreaterThanOrEqual(0.05)
-    })
-
-    it('recognizes Neapolitan cadence (bII→V)', () => {
-      const withNeapolitan = scoreCadence(['I', 'bII', 'V', 'I'], ['C', 'Db', 'G', 'C'], 'C')
-      const withoutNeapolitan = scoreCadence(['I', 'IV', 'V', 'I'], ['C', 'F', 'G', 'C'], 'C')
-
-      // Both have authentic cadence, but Neapolitan adds +0.10
-      expect(withNeapolitan).toBeGreaterThan(withoutNeapolitan)
-    })
-
-    it('clamps maximum score to 1', () => {
-      // Multiple bonuses stacking
-      const score = scoreCadence(['bII', 'V', 'I'], ['Db', 'G', 'C'], 'C')
-      expect(score).toBeLessThanOrEqual(1)
-    })
-  })
-
   describe('scoreAppliedChordResolution', () => {
     it('gives bonus for correct resolution (V/vi → vi)', () => {
       const score = scoreAppliedChordResolution('V/vi', 'vi')
@@ -472,45 +441,204 @@ describe('progressionService', () => {
     })
   })
 
-  describe('calculateFunctionBonus', () => {
-    it('gives bonus for tonic in final slot', () => {
-      const bonus = calculateFunctionBonus('T', 3, 4, null)
-      expect(bonus).toBe(0.15)
+  // ─────────────────────────────────────────────────────────────────────────────
+  // Transition Rules (applied chord resolution, repeated roots)
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  describe('isValidTransition', () => {
+    const chord = (symbol: string, roman: string, extra: Partial<ChordSuggestion> = {}) =>
+      ({
+        id: symbol,
+        symbol,
+        roman,
+        source: 'diatonic',
+        chordTones: Chord.get(symbol).notes,
+        supportScore: 0.5,
+        colorScore: 0.2,
+        ...extra,
+      }) as ChordSuggestion
+
+    const secondary = (symbol: string, target: string) =>
+      chord(symbol, `V/${target}`, { source: 'secondary_dominant', resolvesToRoman: target })
+    const tritoneSub = (symbol: string, target: string) =>
+      chord(symbol, `subV/${target}`, { source: 'substitute_dominant', resolvesToRoman: target })
+
+    it('allows a secondary dominant followed by its target (any 7th/quality suffix)', () => {
+      expect(isValidTransition(secondary('D7', 'V'), chord('G', 'V'))).toBe(true)
+      expect(isValidTransition(secondary('D7', 'V'), chord('G7', 'V7'))).toBe(true)
+      expect(isValidTransition(secondary('A7', 'ii'), chord('Dm7', 'ii7'))).toBe(true)
     })
 
-    it('gives no bonus for tonic in non-final slot', () => {
-      const bonus = calculateFunctionBonus('T', 0, 4, null)
-      expect(bonus).toBe(0)
+    it('rejects a secondary dominant that does not resolve to its target', () => {
+      expect(isValidTransition(secondary('D7', 'V'), chord('Cmaj7', 'Imaj7'))).toBe(false)
+      expect(isValidTransition(secondary('C7', 'IV'), chord('C', 'I'))).toBe(false)
     })
 
-    it('gives bonus for dominant in pre-cadential position', () => {
-      // Position 2 in 4-slot progression (slot n-2)
-      const bonus1 = calculateFunctionBonus('D', 2, 4, null)
-      // Position 3 in 4-slot progression (slot n-1, last slot)
-      const bonus2 = calculateFunctionBonus('D', 3, 4, null)
-
-      expect(bonus1).toBe(0.1)
-      expect(bonus2).toBe(0.1)
+    it('rejects an applied chord as the final chord', () => {
+      expect(isValidTransition(secondary('E7', 'vi'), null)).toBe(false)
+      expect(isValidTransition(tritoneSub('Ab7', 'V'), null)).toBe(false)
     })
 
-    it('gives no bonus for dominant in early position', () => {
-      const bonus = calculateFunctionBonus('D', 0, 4, null)
-      expect(bonus).toBe(0)
+    it('requires tritone subs to resolve down a half step to their target', () => {
+      expect(isValidTransition(tritoneSub('F7', 'iii'), chord('Em7', 'iii7'))).toBe(true)
+      expect(isValidTransition(tritoneSub('F7', 'iii'), chord('Cmaj7', 'Imaj7'))).toBe(false)
+      expect(isValidTransition(tritoneSub('C7', 'V'), chord('Em6', 'i6'))).toBe(false)
     })
 
-    it('gives bonus for subdominant before dominant', () => {
-      const bonus = calculateFunctionBonus('SD', 1, 4, 'D')
-      expect(bonus).toBe(0.08)
+    it('rejects a degree match whose root is wrong (VI vs vi° in minor)', () => {
+      // V/VI in A minor is C7 → F; F#° (melodic vi°) only matches the roman case-insensitively
+      expect(isValidTransition(secondary('C7', 'VI'), chord('F', 'VI'))).toBe(true)
+      expect(isValidTransition(secondary('C7', 'VI'), chord('F#dim', 'vi°'))).toBe(false)
     })
 
-    it('gives no bonus for subdominant not before dominant', () => {
-      const bonus = calculateFunctionBonus('SD', 1, 4, 'T')
-      expect(bonus).toBe(0)
+    it('requires the Neapolitan to move to V', () => {
+      expect(isValidTransition(chord('Db', 'bII'), chord('G7', 'V7'))).toBe(true)
+      expect(isValidTransition(chord('Db', 'bII'), chord('C', 'I'))).toBe(false)
     })
 
-    it('returns 0 for null function', () => {
-      const bonus = calculateFunctionBonus(null, 0, 4, null)
-      expect(bonus).toBe(0)
+    it('rejects adjacent chords on the same root', () => {
+      expect(isValidTransition(chord('Cmaj7', 'Imaj7'), chord('C', 'I'))).toBe(false)
+      expect(isValidTransition(chord('Em7', 'iii7'), chord('Em', 'iii'))).toBe(false)
+      expect(isValidTransition(chord('C', 'I'), chord('F', 'IV'))).toBe(true)
     })
+
+    it('reports resolution targets only for chords that must resolve', () => {
+      expect(getResolutionTarget(secondary('D7', 'V'))).toBe('V')
+      expect(getResolutionTarget(chord('Db', 'bII'))).toBe('V')
+      expect(getResolutionTarget(chord('G7', 'V7'))).toBeNull()
+    })
+  })
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // Golden Musical Tests (full pipeline: notes → features → key → chords)
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  describe('golden progressions from real riffs', () => {
+    const buildRiff = (midis: number[]): TranscribedNote[] =>
+      midis.map((midi, i) => ({
+        startSec: i * 0.5,
+        endSec: i * 0.5 + 0.45,
+        midi,
+        velocity: 0.8,
+      }))
+
+    const RIFFS = [
+      {
+        name: 'C major scale riff',
+        midis: [60, 62, 64, 65, 67, 69, 71, 72, 67, 64, 60],
+        tonic: 'C',
+        mode: 'Major',
+      },
+      {
+        name: 'A minor scale riff',
+        midis: [57, 59, 60, 62, 64, 65, 67, 69, 64, 60, 57],
+        tonic: 'A',
+        mode: 'Minor',
+      },
+      {
+        name: 'E minor scale riff',
+        midis: [64, 66, 67, 69, 71, 72, 74, 76, 71, 67, 64],
+        tonic: 'E',
+        mode: 'Minor',
+      },
+    ]
+    const WEIRDNESS_LEVELS = [0, 0.5, 1]
+
+    const rootChroma = (chord: ChordSuggestion): number => {
+      const root = Chord.get(chord.id).tonic ?? chord.chordTones[0]
+      return Note.chroma(root) as number
+    }
+
+    // Scale degree of a roman numeral, ignoring 7th/quality suffixes and case
+    const degree = (roman: string | undefined): string =>
+      (roman?.match(/^[b#]*[iv]+/i)?.[0] ?? '').toLowerCase()
+
+    const isApplied = (chord: ChordSuggestion): boolean =>
+      chord.source === 'secondary_dominant' ||
+      chord.source === 'substitute_dominant' ||
+      !!chord.resolvesToRoman ||
+      !!chord.roman?.includes('/')
+
+    const describeProgression = (p: ProgressionSuggestion) =>
+      p.slots.map((s) => `${s.chosen.symbol}(${s.chosen.roman})`).join(' ')
+
+    // Checks a chord → next chord transition against the musical rules
+    const transitionProblem = (
+      chord: ChordSuggestion,
+      next: ChordSuggestion | null
+    ): string | null => {
+      if (isApplied(chord)) {
+        if (!next) return `${chord.symbol} (${chord.roman}) ends the progression unresolved`
+        const target = chord.resolvesToRoman ?? chord.roman?.split('/')[1]
+        if (degree(next.roman) !== degree(target)) {
+          return `${chord.symbol} (${chord.roman}) is followed by ${next.symbol} (${next.roman})`
+        }
+        // V/x falls a fifth, subV/x falls a half step
+        const expected = chord.roman?.startsWith('subV') ? 11 : 5
+        if ((rootChroma(next) - rootChroma(chord) + 12) % 12 !== expected) {
+          return `${chord.symbol} does not resolve by root motion to ${next.symbol}`
+        }
+      }
+      if (degree(chord.roman) === 'bii' && chord.roman?.startsWith('bII')) {
+        if (degree(next?.roman) !== 'v') return `Neapolitan ${chord.symbol} not followed by V`
+      }
+      if (next && rootChroma(chord) === rootChroma(next)) {
+        return `${chord.symbol} → ${next.symbol} repeats the same root`
+      }
+      return null
+    }
+
+    const progressionProblems = (p: ProgressionSuggestion): string[] => {
+      const problems: string[] = []
+      const chosen = p.slots.map((s) => s.chosen)
+      chosen.forEach((chord, i) => {
+        const prev = i > 0 ? chosen[i - 1] : null
+        const next = i < chosen.length - 1 ? chosen[i + 1] : null
+
+        const problem = transitionProblem(chord, next)
+        if (problem) problems.push(problem)
+
+        // Alternatives must be drop-in replacements for the slot
+        for (const alt of p.slots[i].alternatives) {
+          const altProblem = transitionProblem(alt, next) ?? (prev && transitionProblem(prev, alt))
+          if (altProblem) problems.push(`alternative ${alt.symbol} in slot ${i}: ${altProblem}`)
+        }
+      })
+      return problems.map((msg) => `${describeProgression(p)}: ${msg}`)
+    }
+
+    for (const riff of RIFFS) {
+      describe(riff.name, () => {
+        const features = extractFeatures(buildRiff(riff.midis))
+        const harmony = analyzeHarmony(features)
+        // Pick the candidate by tonic/mode, not by rank (key ranking may change)
+        const field: HarmonicFieldCandidate = harmony.candidates.find(
+          (c) =>
+            Note.chroma(c.tonic) === Note.chroma(riff.tonic) &&
+            c.mode.toLowerCase() === riff.mode.toLowerCase()
+        ) ?? {
+          id: `${riff.tonic}-${riff.mode.toLowerCase()}`,
+          tonic: riff.tonic,
+          mode: riff.mode,
+          scaleNotes: Scale.get(`${riff.tonic} ${riff.mode.toLowerCase()}`).notes,
+          fitScore: 1,
+          outOfScale: [],
+        }
+        const chords = generateChordSuggestions(field, features)
+
+        for (const weirdness of WEIRDNESS_LEVELS) {
+          it(`obeys voice-leading rules at weirdness ${weirdness}`, () => {
+            const progressions = generateProgressions(field, chords, features, weirdness)
+            expect(progressions.length).toBeGreaterThan(0)
+            expect(progressions.flatMap(progressionProblems)).toEqual([])
+          })
+        }
+
+        it('still offers color chords at weirdness 1', () => {
+          const progressions = generateProgressions(field, chords, features, 1)
+          expect(progressions.some((p) => p.containsColorChord)).toBe(true)
+        })
+      })
+    }
   })
 })

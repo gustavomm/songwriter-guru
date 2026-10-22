@@ -8,6 +8,8 @@ import { WeirdnessKnob } from '../ui/WeirdnessKnob'
 import { ProgressionCard } from './ProgressionCard'
 import type { ProgressionSuggestion } from '../../domain/types'
 
+const DEFAULT_WEIRDNESS = 0.5
+
 export function ProgressionsPanel() {
   const { status, progressions: stateProgressions, harmony, chords, features } = useAppState()
   const [playingIndex, setPlayingIndex] = useState<number | null>(null)
@@ -15,7 +17,7 @@ export function ProgressionsPanel() {
   const playbackRef = useRef<{ timeoutIds: number[] }>({ timeoutIds: [] })
 
   // Weirdness knob state
-  const [weirdness, setWeirdness] = useState(0.5)
+  const [weirdness, setWeirdness] = useState(DEFAULT_WEIRDNESS)
   const [localProgressions, setLocalProgressions] = useState<ProgressionSuggestion[] | null>(null)
   const [isRegenerating, setIsRegenerating] = useState(false)
 
@@ -52,10 +54,22 @@ export function ProgressionsPanel() {
     [selectedCandidate, chords, features]
   )
 
-  // Reset local progressions when state progressions change (new analysis)
+  // Keep the latest weirdness available to the effect below without re-running it
+  const weirdnessRef = useRef(weirdness)
+  weirdnessRef.current = weirdness
+
+  // When state progressions change (new analysis or key change), keep the user's
+  // weirdness setting and regenerate with it instead of resetting the knob
   useEffect(() => {
-    setLocalProgressions(null)
-    setWeirdness(0.5)
+    const currentWeirdness = weirdnessRef.current
+    if (currentWeirdness === DEFAULT_WEIRDNESS || !selectedCandidate || !chords || !features) {
+      setLocalProgressions(null)
+      return
+    }
+    setLocalProgressions(
+      generateProgressions(selectedCandidate, chords, features, currentWeirdness)
+    )
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- only react to new state progressions
   }, [stateProgressions])
 
   // Play a progression as a sequence of chords
@@ -78,11 +92,12 @@ export function ProgressionsPanel() {
 
       progression.chords.forEach((chord, i) => {
         const delay = i * (chordDuration + gap)
+        // Prefer the chord tones computed at generation time; only re-parse as a fallback
+        const tones = progression.slots[i]?.chosen.chordTones ?? getChordTones(chord)
 
         const timeoutId = window.setTimeout(() => {
           setCurrentChordIndex(i)
-          // Parse chord and play (extract root and type)
-          midiPlayer.playChord(getChordTones(chord), 3, chordDuration, 0.35)
+          midiPlayer.playChord(tones, 3, chordDuration, 0.35)
         }, delay)
 
         playbackRef.current.timeoutIds.push(timeoutId)

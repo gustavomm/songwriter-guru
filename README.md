@@ -2,7 +2,7 @@
 
 **Discover chords for your melodies**
 
-Riff Harmonics is a browser-based music theory assistant that helps songwriters and musicians find the perfect chords for their musical ideas. Record a short guitar riff or melody, and the app will transcribe it, detect the most likely keys and modes, and suggest harmonically appropriate chords and progressions.
+Riff Harmonics is a browser-based music theory assistant that helps songwriters and musicians find the perfect chords for their musical ideas. Record a short guitar riff or melody, and the app will transcribe it, detect the most likely major and minor keys, and suggest harmonically appropriate chords and progressions.
 
 100% client-side — no server required, your audio never leaves your browser.
 
@@ -37,7 +37,7 @@ Each chord shows:
 
 ### Progression Generation
 - Generates 4-5 chord progressions from skeleton templates
-- Applies harmonic transformations: applied dominants, Neapolitan substitutes, modal borrowing
+- Fills function templates (tonic, predominant, dominant) with the best-scoring chords, including applied dominants that resolve to their target and borrowed chords
 - Scores progressions on fit, spice, voice leading, and cadence strength
 - **Weirdness knob** to dial between safe/conventional and adventurous/colorful suggestions
 - Alternative chords for each slot to customize progressions
@@ -62,7 +62,7 @@ Each chord shows:
 
 ### Prerequisites
 
-- Node.js 18+ 
+- Node.js 22 (see `.nvmrc`)
 - npm or yarn
 
 ### Installation
@@ -118,7 +118,7 @@ npm run preview
 3. **Feature Extraction**: Converts notes to pitch class weights (how much time spent on each of the 12 notes)
 4. **Harmony Analysis**: Scores all 24 major/minor keys against the pitch class distribution
 5. **Chord Suggestion**: Generates diatonic, secondary dominant, and borrowed chords; scores each against the riff
-6. **Progression Generation**: Decorates skeleton progressions with harmonic transformations, ranked by the weirdness setting
+6. **Progression Generation**: Fills harmonic-function templates with scored chords, ranked by the weirdness setting
 
 ---
 

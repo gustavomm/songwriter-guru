@@ -2,11 +2,29 @@
  * Chord utility functions for parsing and transposing chords
  */
 
+import { Chord } from 'tonal'
+
+/**
+ * Convert display symbols (e.g. "B°7", "Bø7", "C+", "CmM7") into symbols Tonal understands.
+ */
+function toTonalSymbol(chordSymbol: string): string {
+  return chordSymbol
+    .replace(/ø7?/, 'm7b5')
+    .replace(/°7/, 'dim7')
+    .replace(/°/, 'dim')
+    .replace(/\+maj7/, 'maj7#5')
+    .replace(/\+7/, '7#5')
+    .replace(/\+$/, 'aug')
+}
+
 /**
  * Extract chord tones from a chord symbol for playback.
- * Simple parsing - extracts root and basic quality.
+ * Uses Tonal (with display-symbol normalization), falling back to simple parsing.
  */
 export function getChordTones(chordSymbol: string): string[] {
+  const chord = Chord.get(toTonalSymbol(chordSymbol))
+  if (!chord.empty && chord.notes.length > 0) return chord.notes
+
   // Parse common chord patterns
   const match = chordSymbol.match(/^([A-G][#b]?)(.*)$/)
   if (!match) return ['C', 'E', 'G'] // Fallback

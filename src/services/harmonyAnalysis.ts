@@ -5,7 +5,15 @@ import type { RiffFeatures, HarmonyAnalysisResult, HarmonicFieldCandidate } from
 // Constants
 // ─────────────────────────────────────────────────────────────────────────────
 
-const TONICS = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
+/**
+ * Conventional tonic spellings per mode (the spelling used in key signatures).
+ * Flat keys are spelled with flats (Bb major, not A# major) so that scale notes
+ * and chords downstream never end up with double sharps (B#, F##, ...).
+ */
+const TONICS_BY_MODE: Record<string, readonly string[]> = {
+  major: ['C', 'Db', 'D', 'Eb', 'E', 'F', 'F#', 'G', 'Ab', 'A', 'Bb', 'B'],
+  minor: ['C', 'C#', 'D', 'Eb', 'E', 'F', 'F#', 'G', 'G#', 'A', 'Bb', 'B'],
+}
 
 // Only major and minor modes are supported (using Tonal's Key module)
 const MODES = [
@@ -15,13 +23,28 @@ const MODES = [
 
 // Scoring parameters
 const OUT_OF_SCALE_PENALTY = 0.5 // Multiply out-of-scale weight by this
+const TONIC_WEIGHT_FACTOR = 0.15 // Reward riffs that dwell on the tonic pitch class
+const TONIC_TRIAD_WEIGHT_FACTOR = 0.15 // Reward riffs that outline the tonic triad (1-3-5)
 const ENDING_BONUS = 0.05 // Bonus if last note is tonic
 const BASS_BONUS = 0.03 // Bonus if bass note is tonic
 const OUT_OF_SCALE_THRESHOLD = 0.05 // Min weight to report as out-of-scale
 const TOP_CANDIDATES_COUNT = 8 // Number of candidates to return
 
-// Pitch class names for display
-const PC_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
+/**
+ * Highest achievable raw score: every note in scale, all weight on the tonic
+ * (which is also the whole tonic triad weight), ending and bass on the tonic.
+ * Used to normalize the raw score into a 0-1 display value without clamping.
+ */
+const MAX_RAW_SCORE =
+  1 + TONIC_WEIGHT_FACTOR + TONIC_TRIAD_WEIGHT_FACTOR + ENDING_BONUS + BASS_BONUS
+
+/**
+ * Interval above the tonic used to spell each chromatic offset (0-11 semitones).
+ * Out-of-scale notes are named relative to the key (b2, b3/3, #4, b6/6, b7/7),
+ * so F major reports Eb rather than D#, C major reports F# and Bb, and A minor
+ * reports its raised leading tone as G#.
+ */
+const CHROMATIC_INTERVALS = ['1P', '2m', '2M', '3m', '3M', '4P', '4A', '5P', '6m', '6M', '7m', '7M']
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Main Analysis Function
@@ -29,26 +52,26 @@ const PC_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B
 
 /**
  * Analyze pitch class features and rank harmonic field candidates.
- * Evaluates 84 candidates (12 tonics × 7 modes) and returns top matches.
+ * Evaluates 24 candidates (12 tonics × 2 modes) and returns top matches.
  */
 export function analyzeHarmony(features: RiffFeatures): HarmonyAnalysisResult {
   const { pcWeights, lastNotePc, bassPc } = features
 
-  const candidates: HarmonicFieldCandidate[] = []
+  const scored: ScoredCandidate[] = []
 
-  // Evaluate all 84 candidates
-  for (const tonic of TONICS) {
-    for (const mode of MODES) {
-      const candidate = scoreCandidate(tonic, mode, pcWeights, lastNotePc, bassPc)
-      candidates.push(candidate)
+  // Evaluate all 24 candidates
+  for (const mode of MODES) {
+    for (const tonic of TONICS_BY_MODE[mode.name]) {
+      scored.push(scoreCandidate(tonic, mode, pcWeights, lastNotePc, bassPc))
     }
   }
 
-  // Sort by fit score (descending)
-  candidates.sort((a, b) => b.fitScore - a.fitScore)
+  // Sort by raw (unclamped) score so ties in the display value can't hide
+  // differences such as which of two relative keys the riff centers on
+  scored.sort((a, b) => b.rawScore - a.rawScore)
 
   // Take top candidates
-  const topCandidates = candidates.slice(0, TOP_CANDIDATES_COUNT)
+  const topCandidates = scored.slice(0, TOP_CANDIDATES_COUNT).map((s) => s.candidate)
 
   return {
     candidates: topCandidates,
@@ -60,8 +83,23 @@ export function analyzeHarmony(features: RiffFeatures): HarmonyAnalysisResult {
 // Scoring Logic
 // ─────────────────────────────────────────────────────────────────────────────
 
+interface ScoredCandidate {
+  candidate: HarmonicFieldCandidate
+  /** Unnormalized score used for ranking */
+  rawScore: number
+}
+
 /**
  * Score a single tonic+mode candidate against the pitch class weights.
+ *
+ * Raw score = in-scale weight − penalty × out-of-scale weight
+ *           + tonic weight × factor + tonic triad (1-3-5) weight × factor
+ *           + ending bonus + bass bonus
+ *
+ * The tonic terms are what separate relative keys (C major vs A minor share
+ * all seven notes): the candidate whose tonic and tonic triad the riff
+ * emphasizes ranks higher. The display fitScore is the raw score divided by
+ * the maximum achievable raw score, so it stays in 0-1 without clamping.
  */
 function scoreCandidate(
   tonic: string,
@@ -69,7 +107,7 @@ function scoreCandidate(
   pcWeights: readonly number[],
   lastNotePc: number | undefined,
   bassPc: number | undefined
-): HarmonicFieldCandidate {
+): ScoredCandidate {
   // Get scale notes from Tonal
   const scaleName = `${tonic} ${mode.name}`
   const scale = Scale.get(scaleName)
@@ -79,7 +117,7 @@ function scoreCandidate(
   const scalePCs = new Set(scaleNotes.map((note) => Note.chroma(note)))
 
   // Get tonic pitch class
-  const tonicPC = Note.chroma(tonic)
+  const tonicPC = Note.chroma(tonic) ?? 0
 
   // Calculate in-scale and out-of-scale weights
   let inScaleWeight = 0
@@ -95,7 +133,7 @@ function scoreCandidate(
     } else {
       outScaleWeight += weight
       if (weight >= OUT_OF_SCALE_THRESHOLD) {
-        outOfScale.push({ note: PC_NAMES[pc], weight })
+        outOfScale.push({ note: spellPitchClassInKey(pc, tonic, tonicPC), weight })
       }
     }
   }
@@ -103,25 +141,46 @@ function scoreCandidate(
   // Sort out-of-scale notes by weight (descending)
   outOfScale.sort((a, b) => b.weight - a.weight)
 
+  // Tonal-center evidence: weight on the tonic and on the tonic triad (1-3-5)
+  const thirdPC = (tonicPC + (mode.name === 'minor' ? 3 : 4)) % 12
+  const fifthPC = (tonicPC + 7) % 12
+  const tonicWeight = pcWeights[tonicPC]
+  const triadWeight = tonicWeight + pcWeights[thirdPC] + pcWeights[fifthPC]
+
   // Calculate bonuses
   const endingBonus = lastNotePc !== undefined && lastNotePc === tonicPC ? ENDING_BONUS : 0
   const bassBonus = bassPc !== undefined && bassPc === tonicPC ? BASS_BONUS : 0
 
-  // Calculate final fit score
-  // Formula: inScaleWeight - (penalty * outScaleWeight) + bonuses
-  const fitScore = Math.max(
-    0,
-    Math.min(1, inScaleWeight - OUT_OF_SCALE_PENALTY * outScaleWeight + endingBonus + bassBonus)
-  )
+  const rawScore =
+    inScaleWeight -
+    OUT_OF_SCALE_PENALTY * outScaleWeight +
+    TONIC_WEIGHT_FACTOR * tonicWeight +
+    TONIC_TRIAD_WEIGHT_FACTOR * triadWeight +
+    endingBonus +
+    bassBonus
 
   return {
-    id: `${tonic}-${mode.name}`,
-    tonic,
-    mode: mode.displayName,
-    scaleNotes,
-    fitScore,
-    outOfScale,
+    candidate: {
+      id: `${tonic}-${mode.name}`,
+      tonic,
+      mode: mode.displayName,
+      scaleNotes,
+      fitScore: Math.max(0, rawScore / MAX_RAW_SCORE),
+      outOfScale,
+    },
+    rawScore,
   }
+}
+
+/**
+ * Spell an out-of-scale pitch class relative to the key's tonic, so that
+ * chromatic notes follow the key's accidentals (e.g. Eb in F major, G# in
+ * A minor). Double accidentals from remote keys are simplified.
+ */
+function spellPitchClassInKey(pc: number, tonic: string, tonicPC: number): string {
+  const interval = CHROMATIC_INTERVALS[(pc - tonicPC + 12) % 12]
+  const note = Note.transpose(tonic, interval)
+  return /##|bb/.test(note) ? Note.simplify(note) : note
 }
 
 /**

@@ -454,7 +454,7 @@ async function preprocessForTranscription(
     const tempContext = new AudioContext()
     try {
       const tempBuffer = tempContext.createBuffer(1, audioData.length, targetSampleRate)
-      tempBuffer.copyToChannel(audioData, 0)
+      tempBuffer.copyToChannel(new Float32Array(audioData), 0)
       audioData = await applyFrequencyAwareGate(tempBuffer, noiseFloorLinear, targetSampleRate)
     } catch {
       // Fallback to simple gate if frequency-aware fails
